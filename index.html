@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Chart · WebGL2 多副图组件示例</title>
+<style>
+  /* 主题变量由 <stock-chart> 的 setTheme() 写到 :root，页面级样式自动跟随 */
+  :root{--bg:var(--sc-bg,#FFFFFF);--panel:var(--sc-panel,#F7F8FA);--line:var(--sc-line,#ECEEF1);--text:var(--sc-text,#1F2329);--muted:var(--sc-muted,#6B7280);--up:var(--sc-up,#E24B4A);--down:var(--sc-down,#1D9E75)}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:13px/1.6 system-ui,-apple-system,"PingFang SC",sans-serif}
+  header{padding:14px 20px;border-bottom:1px solid var(--line)}
+  h1{margin:0;font-size:16px;font-weight:500}
+  .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:relative}
+  #ma-panel{position:absolute;top:100%;right:12px;z-index:30;width:290px;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.10);padding:10px 12px}
+  #ma-panel h3{margin:0 0 8px;font-size:12px;font-weight:500;display:flex;justify-content:space-between;align-items:center}
+  #ma-panel .ma-row{display:flex;align-items:center;gap:6px;margin:5px 0;font-size:12px}
+  #ma-panel input[type=number]{width:60px;font:12px system-ui;padding:3px 5px;border:1px solid var(--line);border-radius:5px}
+  #ma-panel input[type=color]{width:28px;height:24px;padding:0;border:1px solid var(--line);border-radius:5px;background:var(--bg);cursor:pointer}
+  #ma-panel button{padding:3px 8px;font-size:11px}
+  button,select{font:12px system-ui;padding:5px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);cursor:pointer}
+  .bar select{line-height:16px}
+  button.active{background:color-mix(in srgb,var(--sc-link,#1B5FBF) 12%,var(--panel));background:color-mix(in srgb,var(--sc-link,#1B5FBF) 14%,var(--panel));border-color:var(--sc-link,#85B7EB);color:var(--sc-link,#0C447C)}
+  .tag{padding:4px 8px;border-radius:5px;background:color-mix(in srgb,var(--down) 12%,var(--panel));color:var(--down);font-size:11px}
+  /* 数据演示区（页面级）与图表功能区（图表卡片内）分离 */
+  .demo-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+  .group-label{font:500 11px/1 system-ui;padding:5px 9px;border-radius:5px;background:color-mix(in srgb,var(--sc-link,#1B5FBF) 12%,var(--panel));background:color-mix(in srgb,var(--sc-link,#1B5FBF) 12%,var(--panel));color:var(--sc-link,#0C447C);white-space:nowrap;letter-spacing:.3px}
+  .demo-hint{color:var(--muted);font-size:11px;white-space:nowrap}
+  .chart-card{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+  .chart-header{background:var(--panel);border-bottom:1px solid var(--line);position:relative}
+  .hdr-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 12px;min-width:0}
+  .hdr-row + .hdr-row{border-top:1px solid var(--line)}
+  .hdr-left{display:flex;align-items:center;gap:20px;min-width:0}
+  .brand{display:flex;align-items:baseline;gap:10px;white-space:nowrap}
+  .brand b{font:500 16px/1.2 system-ui,-apple-system,sans-serif;color:var(--text)}
+  .brand span{font:12px/1.2 system-ui,-apple-system,sans-serif;color:var(--muted)}
+  /* 强调报价：当前价 / 涨跌额 / 涨跌幅，固定槽位 + 等宽数字避免 hover 跳动 */
+  .quote{display:flex;align-items:baseline;gap:10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .quote b{font:500 20px/1.2 system-ui,-apple-system,sans-serif;width:84px;text-align:right}
+  .quote span{font-size:13px;font-weight:500;width:62px;text-align:right}
+  .quote.up{color:var(--up)}
+  .quote.down{color:var(--down)}
+  .context{display:flex;align-items:center;gap:8px;white-space:nowrap;font:11px/1.4 system-ui,-apple-system,sans-serif;color:var(--muted);font-variant-numeric:tabular-nums}
+  .context i{font-style:normal;color:var(--muted)}
+  /* 日期时间固定槽位 + 等宽数字：hover 时字符宽度变化不会推动后面的 MA 参数 */
+  .context #head-datetime{flex:0 0 104px;text-align:left;overflow:hidden;text-overflow:ellipsis}
+  /* MA 实时值：标签与数值都用对应均线颜色，数值固定槽位 + 等宽数字 */
+  .ma-values{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .ma-item{display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap}
+  .ma-item i{font-style:normal;font-weight:500}
+  .ma-item b{font-weight:500;width:52px;text-align:right;font-variant-numeric:tabular-nums}
+  .chart-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;position:relative}
+  .chart-tools .sep{width:1px;height:var(--sc-row-h,18px);background:var(--line);margin:0 2px}
+  /* 分时 / K 线各自的功能组：按当前模式整组显示，不再置灰 */
+  .chart-tools .tool-group{display:inline-flex;align-items:center;gap:8px}
+  .chart-tools .tool-group[hidden]{display:none}
+  .head-line2{display:flex;align-items:center;justify-content:flex-end;gap:8px;white-space:nowrap;min-width:0;font:11px/1.4 system-ui,-apple-system,sans-serif;color:var(--muted)}
+  /* 四色涨跌停图例移到头部右侧，与指标行之间用竖线分隔 */
+  .head-line2 .legend{display:flex;align-items:center;gap:6px;white-space:nowrap;padding-right:8px;border-right:1px solid var(--line)}
+  .head-line2 .legend span{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--muted)}
+  .head-line2 .legend i{display:inline-block;width:8px;height:8px;border-radius:2px;flex:0 0 8px}
+  .metrics{display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .metrics .metric{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap}
+  .metrics .metric i{font-style:normal;color:var(--muted)}
+  .metrics .metric b{font-weight:500;width:58px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text);overflow:hidden;text-overflow:ellipsis}
+  .head-line2.muted .metric b{color:var(--muted)}
+  main{padding:16px 20px;max-width:1500px;margin:0 auto}
+  stock-chart{width:100%;height:600px;border:1px solid var(--line);border-radius:10px;overflow:hidden;position:relative}
+  .chart-card stock-chart{border:0;border-radius:0;display:block}
+  #pane-bars{position:absolute;inset:0;pointer-events:none;z-index:5}
+  /* 分隔线用 inset 阴影，不占高度也不裁切 18px 的下拉 */
+  .pane-bar{position:absolute;display:flex;align-items:center;gap:10px;padding:0 10px;box-sizing:border-box;background:var(--panel);box-shadow:inset 0 1px 0 var(--line);font:11px/16px system-ui,-apple-system,"PingFang SC",sans-serif;color:var(--muted);white-space:nowrap;overflow:hidden;pointer-events:auto}
+  /* 无边框下拉：行高与 LAYOUT.rowH 一致，渐变自绘箭头，hover 才给淡底 */
+  .pane-bar select{-webkit-appearance:none;appearance:none;box-sizing:border-box;height:var(--sc-row-h,18px);margin:0;padding:0 18px 0 6px;
+    font:500 11px/16px system-ui,-apple-system,"PingFang SC",sans-serif;color:var(--text);
+    background-color:transparent;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+    background-position:calc(100% - 11px) 7px,calc(100% - 7px) 7px;background-size:4px 4px,4px 4px;background-repeat:no-repeat;
+    border:0;border-radius:3px;min-width:72px;cursor:pointer;outline:none}
+  .pane-bar select:not(:disabled):hover,.pane-bar select:focus,.pane-bar select:focus-visible{outline:none;background-color:var(--panel)}
+  .pane-bar select:disabled{color:var(--muted);cursor:default;background-color:var(--panel)}
+  .pane-bar .vals{color:var(--muted);line-height:16px;overflow:hidden;text-overflow:ellipsis}
+  .pane-bar .vals b{font-weight:500;color:var(--text)}
+  stock-chart > price-pane, stock-chart > indicator-pane, stock-chart > chip-pane, stock-chart > auction-pane{display:none}
+  .card.tape-in-side{border:0;border-radius:0;border-top:1px solid var(--line);display:flex;flex-direction:column;height:100%;min-height:0;cursor:pointer}
+  /* 明细标题行与盘口两条行同高（统一 --sc-bar-h）；flex 垂直居中 */
+  .card.tape-in-side h2{height:var(--sc-bar-h,24px);padding:0 8px;box-sizing:border-box;
+    display:flex;align-items:center;gap:6px;background:var(--sc-panel,#F7F8FA);color:var(--sc-text,#4B5563);font-weight:500;
+    border-bottom:1px solid var(--sc-line,#E3E6EB)}
+  .card.tape-in-side trade-tape{flex:1 1 0%;min-height:0;height:auto}
+  .card.tape-in-side .tape-note{display:none}
+  .tape-hint{display:none;font-size:10px;color:var(--muted);font-weight:400;margin-left:auto;margin-right:6px;
+    background:var(--line);border-radius:4px;padding:1px 6px;line-height:1.4}
+  .card.tape-in-side .tape-hint{display:inline-flex;align-items:center}
+  /* 固定整数高度：让 syncSideBars 的侧栏余量计算不产生亚像素零头 */
+  .tape-footer{flex:0 0 auto;height:32px;box-sizing:border-box;padding:0 8px;border-top:1px solid var(--line);background:var(--bg);cursor:pointer;display:flex;align-items:center}
+  .tape-footer[hidden]{display:none}
+  /* 弱化为与「全景盘口 →」同款的文字链接：无底色/边框/圆角，仅链接色 + hover 下划线 */
+  .tape-footer b{display:block;width:100%;border:0;background:none;padding:0;white-space:nowrap;
+    color:var(--sc-link,#1B5FBF);font:10px/1.4 system-ui,-apple-system,sans-serif;font-weight:400;text-align:center}
+  .tape-footer:hover b{text-decoration:underline}
+  /* 逐笔明细：铺满整个图表区的多组视图（不使用弹窗） */
+  .detail-cover{position:absolute;inset:0;z-index:10;background:var(--bg);display:flex;flex-direction:column}
+  .detail-cover .cover-bar{flex:0 0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;color:var(--text)}
+  .detail-cover .cover-bar b{font-weight:600;color:var(--text)}
+  .detail-cover .cover-back{justify-self:end;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:3px 12px;font:12px system-ui;cursor:pointer;color:var(--text)}
+  .detail-cover .cover-back:hover{background:color-mix(in srgb,var(--sc-link,#1B5FBF) 12%,var(--panel));border-color:color-mix(in srgb,var(--sc-link,#1B5FBF) 30%,transparent)}
+  .detail-cover .cover-tabs{display:inline-flex;gap:4px}
+  .detail-cover .cover-tabs button{border:1px solid var(--line);border-radius:5px;background:var(--bg);padding:3px 9px;font:11px system-ui;cursor:pointer;color:var(--text)}
+  .detail-cover .cover-tabs button.on{background:color-mix(in srgb,var(--sc-link,#1B5FBF) 12%,var(--panel));border-color:color-mix(in srgb,var(--sc-link,#1B5FBF) 30%,transparent);color:var(--sc-link,#1B5FBF);font-weight:600}
+  .detail-cover .cover-count{margin:0;text-align:center;color:var(--muted);font-size:11px;white-space:nowrap}
+  .detail-cover .cover-body{position:relative;flex:1;min-height:0}
+  .detail-cover .cover-scroll{position:absolute;inset:0;overflow-y:auto;z-index:1;scrollbar-width:none;-ms-overflow-style:none}
+  .detail-cover .cover-scroll::-webkit-scrollbar{display:none}
+  .detail-cover .cover-scroll-spacer{width:1px}
+  .detail-cover .cover-groups{position:absolute;inset:0;z-index:2;display:grid;pointer-events:none}
+  .cover-body.pano-mode .cover-scroll,.cover-body.pano-mode .cover-groups{display:none}
+  .cover-body:not(.pano-mode) .cover-panorama{display:none}
+  .cover-panorama{position:absolute;inset:0;display:flex;flex-direction:column}
+  .pano-mid{flex:0 0 auto;text-align:center;padding:6px 10px;background:var(--bg);border-bottom:1px solid var(--line);color:var(--text);font-size:11px}
+  .pano-mid b{color:var(--text);font-weight:600}
+  .pano-cols{flex:1;min-height:0;display:flex}
+  .pano-stat{flex:0 0 auto;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--line);font-size:10.5px;color:var(--muted);line-height:1.5}
+  .pano-stat b{font-weight:600}
+  .pano-empty{padding:28px 12px;text-align:center;color:var(--muted);font-size:11px}
+  .pano-side.bids .pano-stat b{color:var(--up)}
+  .pano-side.asks .pano-stat b{color:var(--down)}
+  .pano-side{flex:1;min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+  .pano-side:last-child{border-right:0}
+  .pano-cap{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;background:var(--panel);border-bottom:1px solid var(--line);font-size:11px;color:var(--text)}
+  .pano-cap b{font-weight:600;color:var(--text)}
+  .pano-cap span{color:var(--muted);font-size:10px;white-space:nowrap}
+  .pano-head{flex:0 0 auto;display:grid;grid-template-columns:52px 1fr 1fr 46px;gap:4px;padding:5px 10px;background:var(--bg);border-bottom:1px solid var(--line);color:var(--muted);font-size:10px;letter-spacing:.2px}
+  .pano-list{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;-ms-overflow-style:none}
+  .pano-list::-webkit-scrollbar{display:none}
+  .pano-row{position:relative;display:grid;grid-template-columns:52px 1fr 1fr 46px;gap:4px;padding:0 10px;height:var(--sc-row-h,18px);align-items:center;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--line);font-size:11px;overflow:hidden}
+  .pano-row > span{position:relative;z-index:1}
+  .pano-row .bar{position:absolute;right:0;left:auto;top:0;bottom:0;z-index:0}
+  .pano-side.bids .pano-row{color:var(--up)}
+  .pano-side.bids .pano-row .bar{background:#FDE7E7;background:color-mix(in srgb,var(--up) 12%,transparent)}
+  .pano-side.asks .pano-row{color:var(--down)}
+  .pano-side.asks .pano-row .bar{background:#E3F4EC;background:color-mix(in srgb,var(--down) 12%,transparent)}
+  .pano-row:nth-child(even){background:var(--panel)}
+  .pano-row:hover{background:#EEF4FC;background:color-mix(in srgb,var(--sc-link,#1B5FBF) 10%,transparent)}
+  .pano-row.near{font-weight:600}
+  .pano-row.near .lbl{color:var(--text)}
+  .pano-row.bound,.pano-row.bound:nth-child(even){background:#FFF8E8;background:color-mix(in srgb,var(--up) 8%,transparent)}
+  .pano-row.bound .lbl{color:var(--up)}
+  .pano-head .num,.pano-row .num{text-align:right}
+  .pano-row .lbl{color:var(--muted)}
+  .detail-cover .group{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+  .detail-cover .group:last-child{border-right:0}
+  .detail-cover .group-head{flex:0 0 auto;padding:5px 6px;background:var(--panel);border-bottom:1px solid var(--line);font:11px/1.4 system-ui;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .detail-cover trade-tape{flex:1 1 0%;min-height:0;height:auto}
+  .card{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+  .card h2{margin:0;padding:6px 12px;font-size:11px;font-weight:400;color:var(--muted);background:var(--panel);border-bottom:1px solid var(--line)}
+  trade-tape{height:280px;display:block}
+  /* 盘口高度完全按内容自适应、不允许滚动（十档 20 行也要完整展示）；明细占剩余高度 */
+  depth-book{display:block;overflow:hidden;scrollbar-width:none;-ms-overflow-style:none}
+  depth-book::-webkit-scrollbar{display:none}
+  footer{padding:14px 20px 28px;color:var(--muted);font-size:12px;max-width:1500px;margin:0 auto}
+  a{color:var(--sc-link,#185FA5)}
+</style>
+<script>
+  // 可见的加载诊断：模块/资源加载失败或数据迟迟未就绪时直接显示在页面上
+  window.__chartErrors = [];
+  function pushFatal(msg) {
+    window.__chartErrors.push(msg);
+    var box = document.getElementById('fatal');
+    if (box) {
+      box.style.display = 'block';
+      box.textContent = '加载诊断：' + window.__chartErrors.slice(-3).join(' | ');
+    }
+  }
+  window.addEventListener('error', function (e) {
+    if (typeof CustomEvent !== 'undefined' && e instanceof CustomEvent) return;  // 忽略组件自定义 chart-error
+    if (/ResizeObserver loop/i.test(e.message || '')) return;   // 浏览器良性通知，不影响渲染
+    var src = e.target && (e.target.src || e.target.href);
+    pushFatal(src ? '资源加载失败 ' + src : '脚本错误 ' + (e.message || 'unknown'));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    pushFatal('Promise 拒绝 ' + ((e.reason && e.reason.message) || String(e.reason)));
+  });
+  window.addEventListener('DOMContentLoaded', function () {
+    if (window.__chartErrors.length) pushFatal('(模块链可能未完整加载)');
+    setTimeout(function () {
+      var st = document.getElementById('status');
+      if (st && /等待|加载中/.test(st.textContent)) {
+        pushFatal('数据未就绪：请确认通过 HTTP 访问，且 src/data 目录可读取');
+      }
+    }, 3500);
+  });
+</script>
+</head>
+<body>
+<header>
+  <h1>Stock Chart · WebGL2 主图 + 多副图组件</h1>
+  <div class="sub">单 canvas / 单 WebGL2 context / scissor 多 pane · 数据为固定历史交易日的稳定示例 case</div>
+</header>
+<div id="fatal" style="display:none;margin:10px 20px;padding:8px 12px;border:1px solid var(--up);background:color-mix(in srgb,var(--up) 12%,var(--panel));color:var(--up);border-radius:6px;font:12px/1.5 system-ui"></div>
+
+<!-- 数据演示：切换示例数据场景与展示口径，属于演示配置，不属于行情功能 -->
+<div class="demo-bar">
+  <span class="group-label">数据演示</span>
+  <label style="color:var(--muted)">盘口场景</label>
+  <select id="sel-scenario">
+    <option value="normal">普通</option>
+    <option value="limitUp">涨停</option>
+    <option value="limitDown">跌停</option>
+  </select>
+  <label style="color:var(--muted)">盘口单位</label>
+  <select id="sel-depth-unit">
+    <option value="volume">挂单量</option>
+    <option value="amount">挂单金额</option>
+  </select>
+  <span class="demo-hint">切换示例数据场景与展示口径，非真实行情功能</span>
+  <span style="flex:1"></span>
+  <span class="tag" id="status">等待加载…</span>
+  <span class="tag" id="compute-mode">计算引擎：js</span>
+</div>
+
+<main>
+  <div class="chart-card">
+    <div class="chart-header">
+      <!-- 第一行：股票标识（强调、置顶）在左，图表功能控件在右 -->
+      <div class="hdr-row">
+        <div class="hdr-left">
+          <div class="brand"><b id="head-name">贵州茅台</b><span id="head-symbol">600519.SH</span></div>
+          <div class="quote up" id="head-quote"><b id="q-price">—</b><span id="q-change">—</span><span id="q-pct">—</span></div>
+        </div>
+        <div class="chart-tools">
+          <button id="btn-intraday" class="active">分时</button>
+          <button id="btn-candle">K 线</button>
+          <span class="sep"></span>
+          <!-- 分时专属：集合竞价（开盘 + 尾盘）开关 -->
+          <span class="tool-group" id="intraday-only">
+            <button id="btn-auction" class="active">集合竞价：开</button>
+          </span>
+          <!-- K 线专属：周期 / 筹码峰 / 均线设置 -->
+          <span class="tool-group" id="candle-only" hidden>
+            <label style="color:var(--muted)">周期</label>
+            <select id="sel-period"></select>
+            <span class="sep"></span>
+            <button id="btn-chips" class="active">筹码峰：开</button>
+            <span class="sep"></span>
+            <button id="btn-ma">均线设置</button>
+            <div id="ma-panel" style="display:none">
+              <h3>K 线均线设置 <button id="ma-close" type="button">关闭</button></h3>
+              <div id="ma-list"></div>
+              <div class="ma-row" style="border-top:1px solid var(--line);padding-top:8px;margin-top:8px">
+                <span>MA</span>
+                <input id="ma-period" type="number" min="1" max="250" value="60">
+                <input id="ma-color" type="color" value="#7C5CDB">
+                <button id="ma-add" type="button">+ 添加</button>
+              </div>
+              <div style="color:var(--muted);font-size:11px;margin-top:6px">最多 8 条，周期重复会自动顺延；点击色块改颜色，改数字后失焦生效</div>
+            </div>
+          </span>
+          <span class="sep"></span>
+          <!-- 两种模式共用 -->
+          <label style="color:var(--muted)">副图数量</label>
+          <select id="sel-subplots">
+            <option value="1">1 个</option>
+            <option value="2">2 个</option>
+            <option value="3" selected>3 个</option>
+          </select>
+        </div>
+      </div>
+      <!-- 第二行：左侧模式/日期/MA 实时值，右侧四色图例 + 固定槽位指标 -->
+      <div class="hdr-row">
+        <div class="context">
+          <span id="head-mode">分时</span><i>·</i><span id="head-datetime">—</span>
+          <span class="ma-values" id="head-ma-values"></span>
+        </div>
+        <div class="head-line2 muted" id="head-metrics">
+          <span class="legend" id="head-legend" style="display:none"></span>
+          <span class="metrics" id="head-metric-list"></span>
+        </div>
+      </div>
+    </div>
+    <stock-chart id="chart" dataset="./src/data" mode="intraday">
+    <price-pane height="50">
+      <!-- 不写死颜色：由组件按实例色板依次分配（橙 / 蓝 / 紫），换肤自动跟随 -->
+      <ma-line period="5"></ma-line>
+      <ma-line period="20"></ma-line>
+      <ma-line period="60"></ma-line>
+    </price-pane>
+    <indicator-pane indicator="VOL" height="12"></indicator-pane>
+    <indicator-pane indicator="AMOUNT" height="12"></indicator-pane>
+    <indicator-pane id="pane-third" indicator="MACD" height="12"></indicator-pane>
+    <auction-pane width="150"></auction-pane>
+    <chip-pane dock="right" width="210" mode="histogram"></chip-pane>
+    <depth-book slot="side" id="book" width="210"></depth-book>
+  </stock-chart>
+  </div>
+
+  <!-- 交易明细：分时模式挂进图表右列（十档盘口下方）；K 线模式留在此隐藏寄主中不展示 -->
+  <div id="tape-home" hidden>
+    <div class="card" id="tape-card">
+      <h2>交易明细<span class="tape-note">（虚拟滚动 · 与十字光标联动）</span>
+        <span class="tape-hint" id="tape-hint">点击展开</span>
+      </h2>
+      <trade-tape id="tape" order="desc"></trade-tape>
+      <div class="tape-footer" id="tape-detail" hidden><b>查看逐笔明细 →</b></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  数据来源与 mock 说明见 <a href="./src/data/SOURCES.md">src/data/SOURCES.md</a>；
+  设计依据见 docs/01（数据格式）、docs/02（扩展数据类型）、docs/03（架构方案）。
+  本页仅用于验证数据结构与组件渲染，不含投资建议。
+</footer>
+
+<script type="module">
+// 组件模块本身无副作用，统一由注册入口显式升级标签
+import { defineAll, SUBPLOT_INDICATORS, PERIODS, LAYOUT, PALETTE } from './src/index.js';
+defineAll();
+// 均线颜色选择器的初值也取自色板，避免页面写死 hex
+document.getElementById('ma-color').value = PALETTE.limitDownBroken;
+
+const chart = document.getElementById('chart');
+const tape = document.getElementById('tape');
+const book = document.getElementById('book');
+// 场景 / 单位 / 全景盘口数据由 <stock-chart> 自己持有，页面只保留明细视图所需的逐笔与委托
+let allTrades = [], allOrders = [], orderMix = '';
+let pendingScroll = null;
+const selPeriod = document.getElementById('sel-period');
+selPeriod.innerHTML = PERIODS.map((p) => `<option value="${p.key}">${p.label}</option>`).join('');
+selPeriod.addEventListener('change', (e) => chart.setPeriod(e.target.value));
+
+/** 场景切换交给组件，页面只同步下拉框；侧栏数据由 depth-scenario-change 事件驱动 */
+function applyScenario(key) {
+  chart.setDepthScenario(key);
+  const sel = document.getElementById('sel-scenario');
+  if (sel) sel.value = key;
+}
+
+/** 盘口单位同样交给组件，页面消费 depth-unit-change 同步十档盘口 */
+function applyDepthUnit(unit) {
+  chart.setDepthUnit(unit);
+  const sel = document.getElementById('sel-depth-unit');
+  if (sel) sel.value = unit === 'amount' ? 'amount' : 'volume';
+  if (detailCover && detailSet === 'panorama') renderPanorama();
+}
+
+chart.addEventListener('depth-scenario-change', (e) => {
+  const { depth } = e.detail;
+  if (depth) book.setData([depth]);
+  if (detailCover && detailSet === 'panorama') renderPanorama();
+});
+chart.addEventListener('depth-unit-change', (e) => book.setUnit?.(e.detail.unit));
+
+function bindDataset(ds) {
+  // 逐笔涨跌口径：以上一笔成交价为基准，首行对昨收；涨 1 / 跌 -1 / 平 0
+  const preClose = ds.manifest.preClose;
+  allTrades = (ds.trades || []).map((t, i, arr) => {
+    const diff = t.price - (i === 0 ? preClose : arr[i - 1].price);
+    return { ...t, trend: Math.abs(diff) < 1e-6 ? 0 : (diff > 0 ? 1 : -1) };
+  });
+  allOrders = ds.orders || [];
+  const cnt = (a) => allOrders.filter((o) => o.action === a).length;
+  orderMix = ` · NEW ${cnt('NEW')} / FILL ${cnt('FILL')} / CANCEL ${cnt('CANCEL')}`;
+  tape.setData(allTrades);
+  if (detailCover) {
+    applyDetailMode();                   // 数据到达后按当前视角重建（时间线或全景盘口）
+    if (pendingScroll != null && detailSet !== 'panorama') {
+      detailFrom = Math.max(0, Math.floor(pendingScroll / DETAIL_ROW_H));
+      renderDetailWindow();
+    }
+    pendingScroll = null;
+  }
+}
+
+const status = document.getElementById('status');
+const setStatus = (text, bad = false) => {
+  status.textContent = text;
+  status.style.background = bad
+    ? 'color-mix(in srgb,var(--up) 12%,var(--panel))'
+    : 'color-mix(in srgb,var(--down) 12%,var(--panel))';
+  status.style.color = bad ? 'var(--up)' : 'var(--down)';
+};
+if (location.protocol === 'file:') setStatus('请用 HTTP 打开（file:// 无法 fetch 数据）', true);
+// 事件统一挂到本页面的 chart 实例（不再走 document 全局总线，避免多实例串扰）
+chart.addEventListener('load-start', () => setStatus('数据加载中…'));
+chart.addEventListener('data-loaded', (e) => setStatus(`已加载 ${e.detail.symbol} · ${e.detail.tradeDate}`));
+// 组件只把 --sc-* 写到自己的 host；示例页额外把页面级配色同步到 :root，供头部/工具栏使用
+chart.addEventListener('theme-change', (e) => {
+  const p = e.detail.palette;
+  const root = document.documentElement;
+  const map = { '--bg': p.background, '--panel': p.panel, '--line': p.grid,
+    '--text': p.text, '--muted': p.textMuted, '--up': p.up, '--down': p.down,
+    '--sc-link': p.link };
+  for (const [k, v] of Object.entries(map)) root.style.setProperty(k, v);
+});
+chart.addEventListener('chart-error', (e) => {
+  setStatus(`错误：${e.detail.message}`, true);
+  window.pushFatal?.(e.detail.message);
+});
+chart.addEventListener('webglcontext-lost', () => setStatus('WebGL 上下文丢失', true));
+chart.addEventListener('dataset-ready', (e) => bindDataset(e.detail.dataset));
+if (chart.getState().datasetReady) bindDataset(chart.getDataset());
+
+const pair = (a, b, fn) => {
+  const [x, y] = [document.getElementById(a), document.getElementById(b)];
+  x.addEventListener('click', () => { fn(); x.classList.add('active'); y.classList.remove('active'); });
+  y.addEventListener('click', () => { fn(true); y.classList.add('active'); x.classList.remove('active'); });
+};
+let auctionOn = true, chipsOn = true;
+const btnAuction = document.getElementById('btn-auction');
+const btnChips = document.getElementById('btn-chips');
+// ---- 交易明细：侧栏一级展开 + 占满图表区的多组逐笔视图 ----
+// 一级：点击侧栏明细区域 → 十档收缩为 1 档、明细占满剩余高度，底部出现「查看逐笔明细」
+// 二级：点击底部触发点 → 在 stock-chart 内铺一层覆盖视图，按宽度把逐笔数据分成多组并排展示（非弹窗）
+let sideExpanded = false;
+let detailCover = null, coverRO = null;
+let coverTapes = [], detailFrom = 0, detailL = 20, detailSet = 'trades';
+const tapeCard = () => document.getElementById('tape-card');
+const tapeHint = () => document.getElementById('tape-hint');
+const tapeDetailBtn = () => document.getElementById('tape-detail');
+
+function applySideExpanded(on) {
+  sideExpanded = !!on;
+  // 先改底部条可见性，再让组件按新 footerH 重算 4 条行与间隙的均分
+  tapeDetailBtn().hidden = !sideExpanded;
+  chart.setSideExpanded?.(sideExpanded);
+  tapeCard().classList.toggle('side-open', sideExpanded);
+  tapeHint().textContent = sideExpanded ? '点击收起' : '点击展开';
+}
+
+/** 按覆盖层宽度决定分组数：每组约 270px，最多 6 组 */
+const detailGroupCount = (width) => Math.max(1, Math.min(6, Math.floor(width / 270)));
+const detailRows = () => (detailSet === 'orders' ? allOrders : allTrades);
+const detailLabel = () => ({ orders: '全部挂单', panorama: '全景盘口' }[detailSet] || '逐笔成交');
+
+/** 组标题实时显示该组当前可见的时间段，滚动时各组时间连续衔接 */
+const DETAIL_ROW_H = LAYOUT.rowH;   // 与 trade-tape / 盘口数据行同一真源
+
+/** 一条连续时间线按栏顺排：栏 g 显示 [from+g*L, from+(g+1)*L)，首尾相接不留断口 */
+function renderDetailWindow() {
+  if (detailSet === 'panorama' || !detailCover || !coverTapes.length) return;
+  const rowsAll = detailRows();
+  const total = rowsAll.length;
+  const n = coverTapes.length, L = detailL;
+  const maxFrom = Math.max(0, total - n * L);
+  detailFrom = Math.max(0, Math.min(detailFrom, maxFrom));
+  for (const [g, item] of coverTapes.entries()) {
+    const rows = rowsAll.slice(detailFrom + g * L, detailFrom + (g + 1) * L);
+    item.tape.setWindow(rows);
+    item.head.textContent = rows.length
+      ? `${g + 1}/${n} · ${rows[0].time}–${rows[rows.length - 1].time} · ${rows.length} 条`
+      : `${g + 1}/${n} · —`;
+  }
+  detailCover.querySelector('.cover-count').textContent =
+    `${detailLabel()} · 共 ${total} 条${detailSet === 'orders' ? orderMix : ''} · ${n} 栏连续时间线 · 第 ${detailFrom + 1}–${Math.min(total, detailFrom + n * L)} 条`;
+  const sc = detailCover.querySelector('.cover-scroll');
+  if (sc && Math.abs(sc.scrollTop - detailFrom * DETAIL_ROW_H) > 1) sc.scrollTop = detailFrom * DETAIL_ROW_H;
+}
+
+/** 滚动条范围只对应整条时间线的起点/终点，中间栏数据不独立滚动 */
+function updateDetailSpacer() {
+  if (!detailCover) return;
+  const total = detailRows().length, L = detailL, n = coverTapes.length || 1;
+  const spacer = detailCover.querySelector('.cover-scroll-spacer');
+  spacer.style.height = `${Math.max(0, total - n * L + L) * DETAIL_ROW_H}px`;
+}
+
+function buildDetailGroups() {
+  if (!detailCover) return;
+  const grid = detailCover.querySelector('.cover-groups');
+  const n = detailGroupCount(detailCover.clientWidth || chart.clientWidth || 900);
+  grid.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+  grid.replaceChildren();
+  coverTapes = [];
+  for (let g = 0; g < n; g += 1) {
+    const col = document.createElement('div');
+    col.className = 'group';
+    const head = document.createElement('div');
+    head.className = 'group-head';
+    const t = document.createElement('trade-tape');
+    col.append(head, t);
+    grid.appendChild(col);
+    t.setViewConfig(detailSet === 'orders'
+      ? { heads: ['时间', '委托价', '数量', '剩余', '类型'], labelKey: 'tag',
+          cols: '52px 1fr 1fr 1fr 34px', colCls: ['', 'num', 'num', 'num', 'side'],
+          extraKey: 'remainVolume' }
+      : { heads: ['时间', '价格', '成交量', '方向'], labelKey: 'side',
+          cols: '62px 1fr 1fr 30px', colCls: ['', 'num', 'num', 'side'], extraKey: null });
+    t.setWindow([]);
+    coverTapes.push({ head, tape: t });
+  }
+  detailCover.dataset.groups = String(n);
+  detailL = Math.max(1, coverTapes[0].tape.visibleRows() || 20);
+  updateDetailSpacer();
+  renderDetailWindow();
+}
+
+/** 全景盘口：左右两块列出当前时刻所有有效买/卖价格档位，超出高度各自滚动 */
+function renderPanorama() {
+  if (!detailCover) return;
+  const host = detailCover.querySelector('.cover-panorama');
+  const p = chart.getState().pano;
+  if (!p) { host.innerHTML = '<div class="pano-empty">全景盘口数据未就绪</div>'; return; }
+  // 全部统计都由当前 bids/asks 实时计算，不写在数据文件里：
+  // 吃光所有卖档 = 拉到涨停；吃光所有买档 = 砸到跌停。
+  const sumOf = (rows) => rows.reduce((a, d) => {
+    a.volume += d.volume;
+    a.amount += d.price * d.volume;
+    a.orders += d.orderCount;
+    return a;
+  }, { volume: 0, amount: 0, orders: 0 });
+  const fmtVol = (v) => v >= 1e8 ? `${(v / 1e8).toFixed(2)} 亿股`
+    : v >= 1e4 ? `${(v / 1e4).toFixed(2)} 万股` : `${v.toLocaleString('zh-CN')} 股`;
+  const fmtAmt = (a) => a >= 1e8 ? `${(a / 1e8).toFixed(2)} 亿元`
+    : a >= 1e4 ? `${(a / 1e4).toFixed(2)} 万元` : `${a.toFixed(0)} 元`;
+  const bidSum = sumOf(p.bids), askSum = sumOf(p.asks);
+  const bidStat = `砸至跌停 ${p.limitDown.toFixed(2)}（${((p.limitDown / p.mid - 1) * 100).toFixed(2)}%）`
+    + ` 需成交 <b>${fmtVol(bidSum.volume)}</b> · 消耗 <b>${fmtAmt(bidSum.amount)}</b> · <b>${bidSum.orders}</b> 笔委托 / ${p.bids.length} 档`;
+  const askStat = `拉至涨停 ${p.limitUp.toFixed(2)}（+${((p.limitUp / p.mid - 1) * 100).toFixed(2)}%）`
+    + ` 需成交 <b>${fmtVol(askSum.volume)}</b> · 消耗 <b>${fmtAmt(askSum.amount)}</b> · <b>${askSum.orders}</b> 笔委托 / ${p.asks.length} 档`;
+
+  // 金额按「委托价 × 挂单量」实时计算；量柱也按当前口径归一化
+  const isAmt = chart.getState().depthUnit === 'amount';
+  const metric = (d) => isAmt ? d.price * d.volume : d.volume;
+  // 数值按大小自适应换算 万 / 亿，小数位随量级收敛；精确值放 title 供 hover 查看
+  const trim = (x) => (x >= 100 ? x.toFixed(1) : x.toFixed(2))
+    .replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1');
+  const fmtCell = (d) => {
+    const v = metric(d);
+    return v >= 1e8 ? `${trim(v / 1e8)}亿` : v >= 1e4 ? `${trim(v / 1e4)}万` : `${Math.round(v)}`;
+  };
+  const unitTip = isAmt ? '元 / 万元 / 亿元' : '股 / 万股 / 亿股';
+  const block = (rows, side, label, limitName, limitPx, statText, emptyText) => {
+    const maxVal = Math.max(1, ...rows.map(metric));
+    const first = rows.length ? rows[0].price.toFixed(2) : '—';
+    return `
+    <div class="pano-side ${side}">
+      <div class="pano-cap"><b>${label} · ${rows.length} 档</b>
+        <span>${first} → ${limitName} ${limitPx.toFixed(2)}</span></div>
+      <div class="pano-stat">${statText}</div>
+      <div class="pano-head"><span>档位</span><span class="num">委托价</span><span class="num" title="单位自适应（${unitTip}），hover 查看精确值">${isAmt ? '挂单额' : '挂单量'}</span><span class="num">笔数</span></div>
+      <div class="pano-list">${rows.length ? rows.map((d, i) => {
+        const cls = `pano-row${i < 10 ? ' near' : ''}${Math.abs(d.price - limitPx) < 1e-6 ? ' bound' : ''}`;
+        const w = Math.max(3, Math.round((metric(d) / maxVal) * 100));
+        return `<div class="${cls}"><div class="bar" style="width:${w}%"></div>
+          <span class="lbl">${label[0]}${i + 1}</span>
+          <span class="num">${d.price.toFixed(2)}</span>
+          <span class="num" title="${d.volume.toLocaleString('zh-CN')} 股 · ${(d.price * d.volume).toFixed(2)} 元">${fmtCell(d)}</span>
+          <span class="num">${d.orderCount}</span></div>`;
+      }).join('') : `<div class="pano-empty">${emptyText}</div>`}</div>
+    </div>`;
+  };
+  host.innerHTML = `
+    <div class="pano-mid">现价 <b>${p.mid.toFixed(2)}</b> · 买一 ${p.bids[0]?.price.toFixed(2) ?? '—'}`
+    + ` / 卖一 ${p.asks[0]?.price.toFixed(2) ?? '—'} · ${p.time} 快照</div>
+    <div class="pano-cols">
+      ${block(p.bids, 'bids', '买单', '跌停', p.limitDown, bidStat, '跌停封板 · 无买盘挂单')}
+      ${block(p.asks, 'asks', '卖单', '涨停', p.limitUp, askStat, '涨停封板 · 无卖盘挂单')}
+    </div>`;
+  detailCover.querySelector('.cover-count').textContent =
+    `全景盘口 · ${p.time} 现价 ${p.mid.toFixed(2)} · 买 ${p.bids.length} 档 / 卖 ${p.asks.length} 档 · 显示${isAmt ? '挂单金额' : '挂单量'}（单位自适应）`;
+}
+
+/** 切换视角：连续时间线（成交/挂单）与全景盘口互斥显示 */
+function applyDetailMode() {
+  if (!detailCover) return;
+  const pano = detailSet === 'panorama';
+  detailCover.querySelector('.cover-body').classList.toggle('pano-mode', pano);
+  detailCover.querySelectorAll('.cover-tabs button').forEach((b) => b.classList.toggle('on', b.dataset.set === detailSet));
+  if (pano) renderPanorama();
+  else buildDetailGroups();
+}
+
+function switchDetailSet(set) {
+  if (!detailCover || set === detailSet) return;
+  detailSet = set;
+  detailFrom = 0;
+  applyDetailMode();
+}
+
+function openTapeDetail(set = 'trades') {
+  if (detailCover) { switchDetailSet(set); return; }
+  detailSet = set;
+  detailFrom = 0;
+  detailCover = document.createElement('div');
+  detailCover.className = 'detail-cover';
+  detailCover.innerHTML = `
+    <div class="cover-bar">
+      <span class="cover-tabs">
+        <button type="button" data-set="trades">逐笔成交</button>
+        <button type="button" data-set="orders">全部挂单</button>
+        <button type="button" data-set="panorama">全景盘口</button>
+      </span>
+      <span class="cover-count"></span>
+      <button type="button" class="cover-back">返回图表 ›</button>
+    </div>
+    <div class="cover-body">
+      <div class="cover-scroll"><div class="cover-scroll-spacer"></div></div>
+      <div class="cover-groups"></div>
+      <div class="cover-panorama"></div>
+    </div>`;
+  detailCover.querySelectorAll('.cover-tabs button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.set === detailSet);
+    b.addEventListener('click', () => switchDetailSet(b.dataset.set));
+  });
+  detailCover.querySelector('.cover-back').addEventListener('click', closeTapeDetail);
+  const sc = detailCover.querySelector('.cover-scroll');
+  sc.addEventListener('scroll', () => {
+    const f = Math.floor(sc.scrollTop / DETAIL_ROW_H);
+    if (f === detailFrom) return;
+    detailFrom = f;
+    renderDetailWindow();
+  });
+  chart.attachCover(detailCover);
+  applyDetailMode();
+  // 宽度/高度变化导致栏数或每栏可见行数变化时重建，保留当前时间窗口起点
+  coverRO = new ResizeObserver(() => {
+    if (!detailCover || detailSet === 'panorama') return;
+    const n = detailGroupCount(detailCover.clientWidth);
+    const L = Math.max(1, coverTapes[0]?.tape.visibleRows() || 20);
+    if (n !== Number(detailCover.dataset.groups)) buildDetailGroups();
+    else if (L !== detailL) { detailL = L; updateDetailSpacer(); renderDetailWindow(); }
+  });
+  coverRO.observe(detailCover);
+}
+
+function closeTapeDetail() {
+  coverRO?.disconnect();
+  coverRO = null;
+  detailCover?.remove();
+  detailCover = null;
+  coverTapes = [];
+}
+
+function placeTape(mode) {
+  const card = tapeCard();
+  const home = document.getElementById('tape-home');
+  if (!card || !home) return;
+  const intraday = mode === 'intraday';
+  // 底部条可见性在任何 setSideExpanded / syncSideBars 之前确定，避免 footerH 时序偏差
+  tapeDetailBtn().hidden = !intraday || !sideExpanded;
+  // K 线模式关闭覆盖视图、回到 hidden 寄主，并复位十档展开状态
+  if (!intraday) { closeTapeDetail(); applySideExpanded(false); }
+  // 挂载点经组件公开 API 收口，页面不再接触内部节点
+  if (intraday) chart.attachDetailCard(card);
+  else chart.detachDetailCard(card, home);
+  card.classList.toggle('tape-in-side', intraday);
+}
+
+tapeCard().addEventListener('click', (e) => {
+  const card = e.currentTarget;
+  if (!card.classList.contains('tape-in-side')) return;
+  if (e.target.closest('#tape-detail')) { openTapeDetail('trades'); return; }
+  applySideExpanded(!sideExpanded);
+});
+// 十档盘口标题条的「全景盘口」入口：直接打开全景委托簿覆盖视图
+book.addEventListener('view-panorama', () => openTapeDetail('panorama'));
+
+const syncToggles = (mode) => {
+  const intraday = mode === 'intraday';
+  // 分时 / K 线功能各自成组：切到相应图才展示，不再把不适用控件置灰
+  document.getElementById('intraday-only').hidden = !intraday;
+  document.getElementById('candle-only').hidden = intraday;
+  btnAuction.textContent = `竞价(开盘+尾盘)：${auctionOn ? '开' : '关'}`;
+  btnChips.textContent = `筹码峰：${chipsOn ? '开' : '关'}`;
+  btnAuction.classList.toggle('active', auctionOn);
+  btnChips.classList.toggle('active', chipsOn);
+  placeTape(mode);
+};
+btnAuction.addEventListener('click', () => {
+  auctionOn = !auctionOn;
+  chart.setAuctionEnabled(auctionOn);
+  syncToggles(chart.getState().mode);
+});
+btnChips.addEventListener('click', () => {
+  chipsOn = !chipsOn;
+  chart.setChipsEnabled(chipsOn);
+  syncToggles(chart.getState().mode);
+});
+pair('btn-candle', 'btn-intraday', (intraday) => {
+  const mode = intraday ? 'intraday' : 'candle';
+  chart.setMode(mode);
+  syncToggles(mode);
+});
+// 副图信息栏（容器、样式、指标数值计算与刷新）已全部收进 <stock-chart> 内部，页面不再持有该 DOM
+document.getElementById('sel-subplots').addEventListener('change', (e) => {
+  chart.setSubplotCount(Number(e.target.value));
+});
+document.getElementById('sel-scenario').addEventListener('change', (e) => applyScenario(e.target.value));
+document.getElementById('sel-depth-unit').addEventListener('change', (e) => applyDepthUnit(e.target.value));
+book.addEventListener('depth-unit-change', (e) => applyDepthUnit(e.detail.unit));
+// 主图基本信息同步到图表卡片头部：时间只在第一行出现一次；
+// 指标拆成固定槽位，同一场景下结构不重建、只改数值（等宽数字右对齐），减少 hover 跳动。
+chart.addEventListener('head-change', (e) => {
+  const d = e.detail;
+  const set = (id, v) => { document.getElementById(id).textContent = v || ''; };
+  set('head-name', d.name); set('head-symbol', d.symbol);
+  // 强调报价随光标联动，涨红跌绿
+  const q = d.quote;
+  if (q) {
+    const qEl = document.getElementById('head-quote');
+    qEl.classList.toggle('up', q.up);
+    qEl.classList.toggle('down', !q.up);
+    const sign = q.up ? '+' : '';
+    set('q-price', q.price);
+    set('q-change', `${sign}${q.change.toFixed(2)}`);
+    set('q-pct', `${sign}${q.pct.toFixed(2)}%`);
+  }
+  set('head-mode', d.modeLabel);
+  const dt = document.getElementById('head-datetime');
+  dt.textContent = d.datetime || '';
+  dt.title = d.datetime || '';   // 固定槽位省略时 hover 可看完整时间
+  // MA 实时值：标签与数值沿用均线颜色，结构按标签序列复用、hover 只更新数值
+  const maBox = document.getElementById('head-ma-values');
+  const maKey = (d.maValues || []).map((m) => m.label).join(',');
+  if (maBox.dataset.key !== maKey) {
+    maBox.innerHTML = (d.maValues || []).map((m) =>
+      `<span class="ma-item"><i style="color:${m.color}">${m.label}</i><b style="color:${m.color}"></b></span>`).join('');
+    maBox.dataset.key = maKey;
+  }
+  const maVals = maBox.querySelectorAll('.ma-item b');
+  (d.maValues || []).forEach((m, i) => { if (maVals[i]) maVals[i].textContent = m.value; });
+  // 四色涨跌停图例移到头部，仅日 K 显示
+  const lg = document.getElementById('head-legend');
+  const lgKey = (d.legend || []).map((x) => x.text).join(',');
+  if (lg.dataset.key !== lgKey) {
+    lg.innerHTML = (d.legend || []).map((x) =>
+      `<span><i style="background:${x.color}"></i>${x.text}</span>`).join('');
+    lg.dataset.key = lgKey;
+  }
+  lg.style.display = lgKey ? 'flex' : 'none';
+  const box = document.getElementById('head-metric-list');
+  const key = (d.metrics || []).map((m) => m.label).join(',');
+  if (box.dataset.key !== key) {
+    box.innerHTML = (d.metrics || []).map((m) => `<span class="metric"><i>${m.label}</i><b></b></span>`).join('');
+    box.dataset.key = key;
+  }
+  const vals = box.querySelectorAll('.metric b');
+  (d.metrics || []).forEach((m, i) => { if (vals[i]) vals[i].textContent = m.value; });
+  document.getElementById('head-metrics').classList.toggle('muted', !d.active);
+});
+document.getElementById('compute-mode').textContent = `计算引擎：${chart.getComputeMode()}`;
+
+// 支持 ?mode=candle|intraday 直接打开指定模式，便于分享与验证
+const urlParams = new URLSearchParams(location.search);
+// ?theme=dark|light 切换主题；也可用 chart.setTheme({up:'#f00',...}) 传自定义色板
+const themeParam = urlParams.get('theme');
+if (themeParam) chart.setTheme(themeParam);
+const urlMode = urlParams.get('mode');
+if (urlMode === 'intraday' || urlMode === 'candle') {
+  chart.setMode(urlMode);
+  document.getElementById(urlMode === 'intraday' ? 'btn-intraday' : 'btn-candle').classList.add('active');
+  document.getElementById(urlMode === 'intraday' ? 'btn-candle' : 'btn-intraday').classList.remove('active');
+}
+// ?period=5m|30m|60m|120m|1w|1M|1Q|1Y 直接切换 K 线周期，便于验证与分享
+const periodParam = urlParams.get('period');
+if (periodParam && PERIODS.some((p) => p.key === periodParam)) {
+  chart.setPeriod(periodParam);
+  selPeriod.value = periodParam;
+}
+// ?depth-scenario=limitUp|limitDown 切换涨停/跌停盘口场景；?depth-levels=5 使用五档盘口
+const scenarioParam = urlParams.get('depth-scenario');
+if (['normal', 'limitUp', 'limitDown'].includes(scenarioParam)) {
+  chart.setDepthScenario(scenarioParam);   // 组件记录预设，数据就绪后自动应用
+  document.getElementById('sel-scenario').value = scenarioParam;
+}
+if (urlParams.get('depth-levels') === '5') book.setLevels?.(5);
+if (urlParams.get('depth-unit') === 'amount') applyDepthUnit('amount');
+// ?tape-side=1 直接展开侧栏明细（十档收缩为 1 档）；?tape-zoom=1 直接打开占满图表区的多组逐笔视图
+if (urlParams.get('tape-side') === '1' && chart.getState().mode === 'intraday') applySideExpanded(true);
+if (urlParams.get('tape-zoom') === '1' && chart.getState().mode === 'intraday') {
+  applySideExpanded(true);
+  const setParam = urlParams.get('tape-set');
+  openTapeDetail(['orders', 'panorama'].includes(setParam) ? setParam : 'trades');
+}
+// ?tape-scroll=600 把多组视图统一滚到指定像素位置，便于验证联动与时间衔接
+const scrollParam = urlParams.get('tape-scroll');
+if (scrollParam !== null && Number.isFinite(Number(scrollParam))) {
+  pendingScroll = Number(scrollParam);          // 数据异步到达后由 bindDataset 应用
+  if (detailCover && allTrades.length) {
+    detailFrom = Math.max(0, Math.floor(pendingScroll / DETAIL_ROW_H));
+    renderDetailWindow();
+    pendingScroll = null;
+  }
+}
+// ?auction=off / ?chips=off 可直接验证开关（也可用工具栏按钮）
+if (urlParams.get('auction') === 'off') { auctionOn = false; chart.setAuctionEnabled(false); }
+if (urlParams.get('chips') === 'off') { chipsOn = false; chart.setChipsEnabled(false); }
+// ?crosshair=N 可固定十字光标位置，便于验证/分享数值显示
+const chParam = urlParams.get('crosshair');
+if (chParam !== null && Number.isFinite(Number(chParam))) chart.setCrosshair(Number(chParam));
+// ?pointer=X,Y 固定鼠标像素位置，便于验证坐标轴定位标签（与 crosshair 搭配）
+const ptParam = urlParams.get('pointer');
+if (ptParam) {
+  const [px, py] = ptParam.split(',').map(Number);
+  if (Number.isFinite(px) && Number.isFinite(py)) chart.setPointer(px, py);
+}
+// ?auction-hover=N 固定竞价区光标（0..68，对应 69 个 9 秒撮合节点），便于验证/分享竞价数值
+const ahParam = urlParams.get('auction-hover');
+if (ahParam !== null && Number.isFinite(Number(ahParam))) chart.setAuctionHover(Number(ahParam));
+// ?closing-hover=N 固定尾盘竞价段光标（0..20，对应 21 个 9 秒节点）
+const clhParam = urlParams.get('closing-hover');
+if (clhParam !== null && Number.isFinite(Number(clhParam))) chart.setClosingHover(Number(clhParam));
+syncToggles(chart.getState().mode);
+
+// ---- K 线均线设置面板 ----
+const maPanel = document.getElementById('ma-panel');
+const maList = document.getElementById('ma-list');
+function renderMAPanel() {
+  const list = chart.getMovingAverages();
+  maList.innerHTML = list.length ? list.map((m) => `
+    <div class="ma-row">
+      <input type="color" value="${m.color}" data-ma-color="${m.period}" title="颜色">
+      <span>MA</span>
+      <input type="number" min="1" max="250" value="${m.period}" data-ma-period="${m.period}" title="周期">
+      <span style="flex:1"></span>
+      <button type="button" data-ma-remove="${m.period}">删除</button>
+    </div>`).join('') : '<div style="color:var(--muted);font-size:12px">暂无均线，可在下方添加</div>';
+}
+let maSkipRender = false;   // 拖动取色器时不重建 DOM，避免打断交互
+chart.addEventListener('ma-config-change', () => { if (!maSkipRender) renderMAPanel(); });
+document.getElementById('btn-ma').addEventListener('click', () => {
+  const open = maPanel.style.display === 'none';
+  maPanel.style.display = open ? 'block' : 'none';
+  if (open) renderMAPanel();
+});
+document.getElementById('ma-close').addEventListener('click', () => { maPanel.style.display = 'none'; });
+document.getElementById('ma-add').addEventListener('click', () => {
+  chart.addMovingAverage({
+    period: Number(document.getElementById('ma-period').value) || 60,
+    color: document.getElementById('ma-color').value,
+  });
+});
+maList.addEventListener('input', (e) => {
+  const p = e.target.dataset.maColor;
+  if (p != null) {
+    maSkipRender = true;
+    chart.updateMovingAverage(Number(p), { color: e.target.value });
+    maSkipRender = false;
+  }
+});
+maList.addEventListener('change', (e) => {
+  const p = e.target.dataset.maPeriod;
+  if (p != null) chart.updateMovingAverage(Number(p), { period: Number(e.target.value) });
+});
+maList.addEventListener('click', (e) => {
+  const p = e.target.dataset.maRemove;
+  if (p != null) chart.removeMovingAverage(Number(p));
+});
+// ?ma=5,10,60 可直接用 URL 覆盖均线配置，便于验证 / 分享
+const maParam = urlParams.get('ma');
+if (maParam) chart.setMovingAverages(maParam.split(',').filter(Boolean).map((n, i) => ({
+  period: Number(n) || 5,
+  color: [PALETTE.avg, PALETTE.chipLoss, PALETTE.limitDownBroken, PALETTE.down,
+    PALETTE.up, PALETTE.chipProfit, PALETTE.limitUpBroken, PALETTE.limitDown][i % 8],
+})));
+// ?ma-panel=1 直接展开设置面板，便于验证 / 分享
+if (urlParams.get('ma-panel') === '1') { maPanel.style.display = 'block'; renderMAPanel(); }
+// ?panes=VOL,AMOUNT,KDJ 一次性配置所有副图（副图数量随列表长度，最多 3 个）
+const panesParam = urlParams.get('panes');
+if (panesParam) {
+  const names = panesParam.split(',').filter(Boolean).map((s) => s.toUpperCase());
+  const n = Math.max(1, Math.min(3, names.length));
+  chart.setSubplotCount(n);
+  document.getElementById('sel-subplots').value = String(n);
+  names.slice(0, n).forEach((nm, i) => {
+    if (SUBPLOT_INDICATORS.includes(nm)) chart.setSubplotIndicator(i, nm);
+  });
+}
+</script>
+</body>
+</html>

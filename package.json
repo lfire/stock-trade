@@ -1,0 +1,49 @@
+{
+  "name": "stock-chart",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "WebGL2 主图 + 多副图股票图表 Web Components（P0 可运行骨架）",
+  "license": "MIT",
+  "author": "lfire",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lfire/stock-trade.git"
+  },
+  "keywords": ["stock-chart", "web-components", "webgl2", "kline", "candlestick", "a-share"],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./pure": {
+      "types": "./dist/pure.d.ts",
+      "default": "./dist/pure.js"
+    },
+    "./react": {
+      "types": "./dist/frameworks/react.d.ts",
+      "default": "./dist/frameworks/react.js"
+    },
+    "./elements/*": "./dist/elements/*.js"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "fetch": "node scripts/fetch-public-data.mjs",
+    "data": "node scripts/build-sample-data.mjs",
+    "check": "node scripts/verify.mjs",
+    "test": "node --test scripts/tests/*.test.mjs",
+    "typecheck": "tsc --noEmit --lib es2020,dom --module esnext --moduleResolution bundler src/index.d.ts src/pure.d.ts",
+    "build": "node scripts/build.mjs",
+    "prepublishOnly": "npm run check && npm run typecheck && npm test && npm run build",
+    "serve": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}
