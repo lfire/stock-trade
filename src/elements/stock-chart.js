@@ -5,7 +5,7 @@ export { SUBPLOT_INDICATORS };
 import { loadDataset } from '../core/data-store.js';
 import { PALETTE, LAYOUT, resolveTheme } from '../types.js';
 import { chipSnapshotAt } from './chip-pane.js';
-import { adaptiveMAPeriods, adaptiveMACDParams, maParamsText, macdParamsText } from '../core/indicator-params.js';
+import { adaptiveMAPeriods, parseMACDParams, resolveMACDParams, maParamsText, macdParamsText } from '../core/indicator-params.js';
 
 const PANE_SELECTOR = 'price-pane, indicator-pane, chip-pane, auction-pane';
 /** 声明式 <ma-line> 未给 color 时依次取色板中的这三项，换主题时按同一组键刷新 */
@@ -29,7 +29,7 @@ const PANE_BARS_CSS = `
 `;
 
 export class StockChart extends HTMLElement {
-  static get observedAttributes() { return ['dataset', 'mode', 'symbol', 'auction', 'chips', 'theme']; }
+  static get observedAttributes() { return ['dataset', 'mode', 'symbol', 'auction', 'chips', 'theme', 'macd']; }
 
   constructor() {
     super();
@@ -159,6 +159,9 @@ export class StockChart extends HTMLElement {
     // 声明式主题优先；未声明时等 setDataset() 读取数据集 manifest 的配色声明
     const declaredTheme = this.getAttribute('theme');
     if (declaredTheme) this.setTheme(declaredTheme);
+    // 声明式 MACD 参数，如 macd="12,26,9"；未声明保持固定默认 (12,26,9)
+    const declaredMACD = this.getAttribute('macd');
+    if (declaredMACD) this.ctx.setMACDParams(parseMACDParams(declaredMACD));
 
     // 无 dataset 属性时不发起任何 fetch：作为 npm 包使用时由 setDataset() 注入内存数据，
     // 避免消费者目录下不存在 './src/data' 而报 404。示例页显式写了 dataset="./src/data"。
@@ -193,6 +196,7 @@ export class StockChart extends HTMLElement {
     if (name === 'mode') this.ctx.setMode(newV || 'candle');
     if (name === 'auction') this.ctx.setAuctionEnabled(newV !== 'off');
     if (name === 'chips') this.ctx.setChipsEnabled(newV !== 'off');
+    if (name === 'macd') { this.setMACDParams(newV || ''); return; }
     if (name === 'dataset' && newV) {
       this.dispatchEvent(new CustomEvent('load-start', { detail: { base: newV }, bubbles: true }));
       loadDataset(newV).then((ds) => this.setDataset(ds)).catch((e) => this.showError(e.message));
@@ -301,7 +305,7 @@ export class StockChart extends HTMLElement {
     const group = (title, lo, hi, conc) =>
       `<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--sc-line,#EEF0F3)">`
       + `<div style="font-size:10px;color:var(--sc-muted,#9AA3AF);letter-spacing:.3px;margin-bottom:2px">${title}</div>`
-      + row('区间', `${lo}–${hi}`) + row('集中度', conc) + `</div>`;
+      + row('区间', `${lo}–${hi}`) + row('集中度(面板口径)', conc) + `</div>`;
     const pct = c.profitRatio * 100;
     const head = `<div style="background:var(--sc-panel,#FAFBFC);border-bottom:1px solid var(--sc-line,#ECEEF1);padding:5px 8px;margin:-6px -8px 8px;display:flex;align-items:center;justify-content:space-between;gap:8px">`
       + `<b style="font:500 12px/1.4 system-ui,-apple-system,sans-serif;color:var(--sc-text,#1F2329)">筹码统计</b>`
@@ -312,9 +316,9 @@ export class StockChart extends HTMLElement {
       + `<b style="font:500 18px/1.2 system-ui,-apple-system,sans-serif;color:var(--sc-up,#E24B4A);${num}">${pct.toFixed(2)}%</b></div>`
       + `<div style="height:6px;border-radius:3px;background:var(--sc-line,#ECEEF1);overflow:hidden;margin-top:6px">`
       + `<div style="width:${Math.max(0, Math.min(100, pct))}%;height:100%;background:var(--sc-up,#E24B4A)"></div></div></div>`;
-    const avg = c.weightedAvgCost != null ? c.weightedAvgCost.toFixed(2) : '—';
-    this.statsEl.innerHTML = head + main + row('平均成本', avg, true)
-      + row('居中成本', c.avgCost.toFixed(2))
+    // 软件面板口径：「平均成本」= COST(50)（分布中位/中心），加权平均成本另列
+    this.statsEl.innerHTML = head + main + row('平均成本', c.avgCost.toFixed(2), true)
+      + row('加权均成本', c.weightedAvgCost != null ? c.weightedAvgCost.toFixed(2) : '—')
       + group('90% 成本分布', c.cost90Low.toFixed(2), c.cost90High.toFixed(2), `${(c.concentration90 * 100).toFixed(2)}%`)
       + group('70% 成本分布', c.cost70Low.toFixed(2), c.cost70High.toFixed(2), `${(c.concentration70 * 100).toFixed(2)}%`);
   }
@@ -517,14 +521,17 @@ export class StockChart extends HTMLElement {
       }).join('  ');
       return `${ma}  量 ${b(shortNum(cur))}`;
     }
-    const macdP = name === 'MACD' ? adaptiveMACDParams(bars.length) : null;
+    const macdP = name === 'MACD' ? ctx.getMACDParams() : null;
     const res = ctx.compute.indicator(name === 'VOL_RATIO' ? 'VOL_RATIO' : name, bars, macdP || {});
     const mapped = intraday
       ? Math.max(0, res.values.length - ctx.visibleCount()) + (i - ctx.viewport.start)
       : i;
     const v = res.values[mapped];
     if (!v) return '';
-    if (name === 'MACD') return `${macdParamsText(macdP)}  MACD ${b(num(v.macd).toFixed(3))}  DIFF ${b(num(v.dif).toFixed(3))}  DEA ${b(num(v.dea).toFixed(3))}`;
+    if (name === 'MACD') {
+      const fmt = (x) => (x == null ? '—' : b(num(x).toFixed(3)));
+      return `${macdParamsText(macdP)}  MACD ${fmt(v.macd)}  DIFF ${fmt(v.dif)}  DEA ${fmt(v.dea)}`;
+    }
     if (name === 'KDJ') return `(9)  K ${b(num(v.k).toFixed(1))}  D ${b(num(v.d).toFixed(1))}  J ${b(num(v.j).toFixed(1))}`;
     return `(5日)  量比 ${b(num(v.value).toFixed(2))}`;
   }
@@ -588,6 +595,19 @@ export class StockChart extends HTMLElement {
   getSubplotConfig() { return this.ctx.getSubplotConfig(); }
   getSubplotLayout() { return this.ctx.getSubplotLayout(); }
   setSubplotIndicator(index, name) { return this.ctx.setSubplotIndicator(index, name); }
+  /**
+   * 设置 MACD 参数：支持 {fast,slow,signal} 对象或 '12,26,9' 字符串；
+   * 非法输入回退固定默认 (12,26,9)。变更会触发 macd-params-change 并重绘。
+   */
+  setMACDParams(input) {
+    const patch = typeof input === 'string' ? parseMACDParams(input) : (input || {});
+    const resolved = this.ctx ? this.ctx.setMACDParams(patch) : resolveMACDParams(patch);
+    this.renderPaneBars();
+    return resolved;
+  }
+  getMACDParams() {
+    return this.ctx ? this.ctx.getMACDParams() : resolveMACDParams();
+  }
   getMovingAverages() { return this.ctx.maConfig.map((m) => ({ ...m })); }
   setMovingAverages(list) { return this.ctx.setMA(list); }
   addMovingAverage(cfg) { return this.ctx.addMA(cfg); }

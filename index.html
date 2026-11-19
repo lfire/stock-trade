@@ -327,6 +327,8 @@ let allTrades = [], allOrders = [], orderMix = '';
 let pendingScroll = null;
 const selPeriod = document.getElementById('sel-period');
 selPeriod.innerHTML = PERIODS.map((p) => `<option value="${p.key}">${p.label}</option>`).join('');
+// 周期列表按分钟→日→周月年排序，必须显式选中默认日 K（否则浏览器会默认选中第一项 1 分钟）
+selPeriod.value = chart.getPeriod();
 selPeriod.addEventListener('change', (e) => chart.setPeriod(e.target.value));
 
 /** 场景切换交给组件，页面只同步下拉框；侧栏数据由 depth-scenario-change 事件驱动 */
@@ -752,7 +754,7 @@ if (urlMode === 'intraday' || urlMode === 'candle') {
   document.getElementById(urlMode === 'intraday' ? 'btn-intraday' : 'btn-candle').classList.add('active');
   document.getElementById(urlMode === 'intraday' ? 'btn-candle' : 'btn-intraday').classList.remove('active');
 }
-// ?period=5m|30m|60m|120m|1w|1M|1Q|1Y 直接切换 K 线周期，便于验证与分享
+// ?period=1m|5m|15m|30m|60m|120m|1d|1w|1M|1Q|1Y 直接切换 K 线周期，便于验证与分享
 const periodParam = urlParams.get('period');
 if (periodParam && PERIODS.some((p) => p.key === periodParam)) {
   chart.setPeriod(periodParam);
@@ -854,6 +856,9 @@ if (maParam) chart.setMovingAverages(maParam.split(',').filter(Boolean).map((n, 
   color: [PALETTE.avg, PALETTE.chipLoss, PALETTE.limitDownBroken, PALETTE.down,
     PALETTE.up, PALETTE.chipProfit, PALETTE.limitUpBroken, PALETTE.limitDown][i % 8],
 })));
+// ?macd=12,26,9 可直接用 URL 覆盖 MACD 参数，便于验证 / 分享
+const macdParam = urlParams.get('macd');
+if (macdParam) chart.setMACDParams(macdParam);
 // ?ma-panel=1 直接展开设置面板，便于验证 / 分享
 if (urlParams.get('ma-panel') === '1') { maPanel.style.display = 'block'; renderMAPanel(); }
 // ?panes=VOL,AMOUNT,KDJ 一次性配置所有副图（副图数量随列表长度，最多 3 个）

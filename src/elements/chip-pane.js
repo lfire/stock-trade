@@ -80,8 +80,8 @@ export class ChipPane extends PaneElement {
       }
       line(out, r.x, y(close), r.x + r.w, y(close), 1.4, rgba(PALETTE.up));
     }
-    // 加权平均成本位置线：中性灰细虚线贯穿筹码峰，随光标按交易日联动
-    const avgCost = snap?.stat?.weightedAvgCost ?? chips.current?.weightedAvgCost;
+    // 平均成本线 = COST(50)（软件面板口径、筹码分布中心）；加权平均成本是另一统计量，另列在统计面板
+    const avgCost = snap?.stat?.avgCost ?? chips.current?.avgCost;
     if (avgCost > min && avgCost < max) {
       const ay = y(avgCost);
       const ink = rgba(PALETTE.textMuted, 0.88);
@@ -101,12 +101,12 @@ export class ChipPane extends PaneElement {
     const s = chipSnapshotAt(ctx)?.stat || ctx.dataset.chips.current;
     const rows = [
       `获利比例 ${(s.profitRatio * 100).toFixed(2)}%`,
+      `平均成本(COST50) ${s.avgCost.toFixed(2)}`,
       `加权均成本 ${(s.weightedAvgCost ?? 0).toFixed(2)}`,
-      `居中成本 ${s.avgCost.toFixed(2)}`,
       `90%区间 ${s.cost90Low.toFixed(2)}–${s.cost90High.toFixed(2)}`,
-      `90集中度 ${(s.concentration90 * 100).toFixed(2)}%`,
+      `90集中度(面板) ${(s.concentration90 * 100).toFixed(2)}%`,
       `70%区间 ${s.cost70Low.toFixed(2)}–${s.cost70High.toFixed(2)}`,
-      `70集中度 ${(s.concentration70 * 100).toFixed(2)}%`,
+      `70集中度(面板) ${(s.concentration70 * 100).toFixed(2)}%`,
     ];
     return rows.map((t, i) => ({ x: r.x + 8, y: r.y + 8 + i * 16, text: t, color: PALETTE.textMuted }));
   }

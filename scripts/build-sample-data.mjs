@@ -4,6 +4,12 @@
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { matchAuction, makeOrderBook } from './auction-match.mjs';
+import { limitRateFor, limitStateOf } from './limit-rules.mjs';
+
+const SYMBOL = '600519.SH';
+const NAME = '贵州茅台';
+const LIMIT_RATE = limitRateFor(SYMBOL, NAME);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const rawDir = path.join(root, '.tmp-raw');
@@ -13,6 +19,21 @@ mkdirSync(dataDir, { recursive: true });
 mkdirSync(rawCopyDir, { recursive: true });
 
 const TRADE_DATE = '2026-11-13';   // 固定历史完整交易日，避免「当日进行中」数据导致 case 不稳定
+/** 筹码模型参数可通过 CLI 覆写：npm run data -- --chips-decay=2 --chips-shape=uniform */
+const cliArg = (key, fallback) => {
+  const hit = process.argv.find((a) => a.startsWith(`--${key}=`));
+  return hit ? hit.slice(hit.indexOf('=') + 1) : fallback;
+};
+const numArg = (key, fallback, min, max) => {
+  const v = Number(cliArg(key, fallback));
+  return Number.isFinite(v) && v >= min && v <= max ? v : Number(fallback);
+};
+const CHIPS_OPTS = Object.freeze({
+  bins: Math.round(numArg('chips-bins', 150, 20, 500)),
+  lookback: Math.round(numArg('chips-lookback', 120, 20, 1000)),
+  decay: numArg('chips-decay', 1, 0.1, 10),
+  shape: cliArg('chips-shape', 'triangular') === 'uniform' ? 'uniform' : 'triangular',
+});
 const r2 = (n) => Math.round(n * 100) / 100;
 const r6 = (n) => Math.round(n * 1e6) / 1e6;
 const readJson = (f) => JSON.parse(readFileSync(path.join(rawDir, f), 'utf8'));
@@ -59,19 +80,8 @@ function buildBars() {
     };
   });
 
-  // 沪市主板 600519（非 ST）涨跌幅限制 10%。前复权价格可能有几分钱误差，判定用 0.5% 容差。
-  const LIMIT_RATE = 0.10;
-  const stateOf = (b) => {
-    const up = r2(b.preClose * (1 + LIMIT_RATE));
-    const down = r2(b.preClose * (1 - LIMIT_RATE));
-    const eps = b.preClose * 0.005;
-    if (Math.abs(b.close - up) <= eps) return 'limitUp';
-    if (Math.abs(b.close - down) <= eps) return 'limitDown';
-    if (Math.abs(b.high - up) <= eps) return 'limitUpBroken';
-    if (Math.abs(b.low - down) <= eps) return 'limitDownBroken';
-    return '';
-  };
-  bars.forEach((b) => { b.limitState = stateOf(b); });
+  // 按比例（由代码/名称识别板块）与 0.01 元最小变动单位判定，容差固定 0.011 元
+  bars.forEach((b) => { b.limitState = limitStateOf(b, LIMIT_RATE); });
 
   // 真实 935 根里几乎无跌停/跌停炸板，为让四种配色都可见，在中段 4 个交易日拟真注入形态。
   // 只改这 4 根的 OHLC 与派生字段，并同步其后一根的 preClose 链条，保持数据自洽。
@@ -104,11 +114,11 @@ function buildBars() {
       next.change = r2(next.close - c);
       next.pctChg = r2(((next.close - c) / c) * 100);
       next.amplitude = r2(((next.high - next.low) / c) * 100);
-      next.limitState = stateOf(next);
+      next.limitState = limitStateOf(next, LIMIT_RATE);
     }
   }
   notes.push(`日 K：东方财富 push2his kline（fqt=1 前复权）真实数据 ${klines.length} 根，剔除 ${TRADE_DATE} 之后未完成的当日 K 线，保留 ${bars.length} 根。`);
-  notes.push('涨跌停状态：按沪市主板 10% 限制（复权误差取 0.5% 容差）从真实 OHLC 检测 `limitState`；真实序列里涨停仅 1 根、跌停与跌停炸板为 0，故在中段 4 个交易日拟真注入 涨停 / 跌停 / 涨停炸板（触板未封住）/ 跌停炸板（触板未封死）各 1 根，仅调整这 4 根 OHLC 及其派生字段并同步下一根 preClose 链条，保证四种配色在图上均可见。');
+  notes.push(`涨跌停状态：按代码/名称识别板块确定比例（本例 600519.SH 沪市主板 ${(LIMIT_RATE * 100).toFixed(0)}%），涨跌停价 = 前复权昨收 ×(1±比例) 四舍五入到 0.01 元，容差固定 0.011 元（1 个最小变动单位），不再用 0.5% 相对容差；真实序列里涨停仅 1 根、跌停与跌停炸板为 0，故在中段 4 个交易日拟真注入 涨停 / 跌停 / 涨停炸板（触板未封住）/ 跌停炸板（触板未封死）各 1 根，仅调整这 4 根 OHLC 及其派生字段并同步下一根 preClose 链条，保证四种配色在图上均可见。`);
   return bars;
 }
 
@@ -166,8 +176,11 @@ function summarize(grid, ratios, close) {
   };
 }
 
-function buildChips(bars) {
-  const BINS = 150, LOOKBACK = 120;
+function buildChips(bars, opts = {}) {
+  const BINS = opts.bins ?? 150;
+  const LOOKBACK = opts.lookback ?? 120;
+  const DECAY = opts.decay ?? 1;                 // 历史换手衰减系数 n（通达信默认 1，范围 0.1–10）
+  const SHAPE = opts.shape ?? 'triangular';      // 'triangular' | 'uniform'（平均分布）
   const win = bars.slice(-LOOKBACK);
   const lo = Math.min(...win.map((b) => b.low)) * 0.98;
   const hi = Math.max(...win.map((b) => b.high)) * 1.02;
@@ -175,17 +188,22 @@ function buildChips(bars) {
   const priceGrid = Array.from({ length: BINS }, (_, i) => r2(lo + (i + 0.5) * step));
   const stock = new Float64Array(BINS);
   const stats = [], histograms = [];
-  win.forEach((b, idx) => {
-    const turn = Math.min(Math.max(b.turnoverRate / 100, 0), 1);
-    for (let i = 0; i < BINS; i += 1) stock[i] *= (1 - turn);   // 存量筹码衰减
-    const peak = (b.open + b.close + b.high + b.low) / 4;        // 三角形分布顶点
+  win.forEach((b) => {
+    const turn = Math.min(Math.max((b.turnoverRate / 100) * DECAY, 0), 1);
+    for (let i = 0; i < BINS; i += 1) stock[i] *= (1 - turn);   // 存量筹码按换手率×衰减系数折损
+    // 通达信三角形分布的峰在「当日成交均价（成交额/成交量）」，不是四价算术均值；
+    // 一字板/金额缺失时回退四价均价，并始终把峰 clamp 在当日 [low, high] 内。
+    const vwap = b.amount > 0 && b.volume > 0
+      ? b.amount / b.volume : (b.open + b.close + b.high + b.low) / 4;
+    const peak = Math.max(b.low, Math.min(b.high, vwap));
     const w = new Float64Array(BINS);
     let sum = 0;
     for (let i = 0; i < BINS; i += 1) {
       const p = priceGrid[i];
       if (p < b.low || p > b.high) continue;
       let v;
-      if (b.high === b.low) v = Math.abs(p - b.high) < step ? 1 : 0;   // 一字板堆单档
+      if (SHAPE === 'uniform') v = 1;                                   // 平均分布：当日换手量在 high~low 均摊
+      else if (b.high === b.low) v = Math.abs(p - b.high) < step ? 1 : 0;   // 一字板堆单档
       else if (p <= peak) v = (p - b.low) / (peak - b.low || step);
       else v = (b.high - p) / (b.high - peak || step);
       w[i] = Math.max(0, v); sum += w[i];
@@ -198,10 +216,12 @@ function buildChips(bars) {
     // 全回看窗口每天都存一份直方图，供 K 线 hover 按历史交易日联动筹码峰
     histograms.push({ date: b.tradeDate, ratios });
   });
-  notes.push(`筹码峰：公开接口（东财 cyq）多次空响应，改为基于真实日 K + 换手率按三角形成本分布算法自行计算；价格域 ${BINS} 档、回看 ${LOOKBACK} 日、存量按 (1-换手率) 衰减。输出 9 项统计 + ${LOOKBACK} 日逐日 150 档直方图，共用一份 priceGrid。`);
+  notes.push(`筹码峰：公开接口（东财 cyq）多次空响应，改为基于真实日 K + 换手率按${SHAPE === 'uniform' ? '平均' : '三角形'}成本分布模型自行计算；三角分布峰值取当日成交均价（成交额/成交量，一字板回退四价均价），价格域 ${BINS} 档、回看 ${LOOKBACK} 日、历史换手衰减系数 ${DECAY}，存量按 (1-换手率×衰减系数) 折损。分位数取 COST(5/95/15/85/50)，集中度 =(高-低)/(高+低) 为同花顺面板口径（非通达信 SCR 的再除 2 版本）。参数可用 --chips-bins / --chips-lookback / --chips-decay / --chips-shape 配置。`);
   return {
-    symbol: '600519.SH', adjust: 'qfq', algorithm: 'triangular-cost-distribution',
+    symbol: SYMBOL, adjust: 'qfq', algorithm: `${SHAPE}-cost-distribution`,
     bins: BINS, lookback: LOOKBACK, priceGrid,
+    peakSource: 'vwap', decay: DECAY, shape: SHAPE,
+    concentrationBasis: 'panel (high-low)/(high+low), not SCR/2',
     dates: stats.map((s) => s.date), stats, histograms,
     current: stats[stats.length - 1],
     currentHistogram: histograms[histograms.length - 1],
@@ -271,28 +291,29 @@ function buildAuction(bars, intraday, iso) {
     const time = `09:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
     const isEnd = idx === secs.length - 1;            // 9:25:00 统一撮合
     const k = sec / 600;
-    const virtualPrice = priceAt(sec);
-    // 虚拟匹配量（手）：累计可成交量单调不减、后期加速，9:25 精确等于真实竞价成交量
-    const matched = isEnd ? realLots : Math.max(1, Math.round(realLots * Math.pow(k, 1.7)));
-    // 虚拟未匹配量：锚点 + 小幅波动，9:25 归零
-    const unmatched = isEnd ? 0
-      : Math.max(0, unmatchedAt(sec) + Math.round((rnd() - 0.5) * 90));
-    // 挂单方向：可撤单期虚假买单（买方堆积 / 红）为主，9:20 后转为卖方堆积（绿）
-    const unmatchedSide = unmatched === 0 ? 0
-      : (sec < 280 ? (rnd() > 0.25 ? 1 : 2) : (rnd() > 0.15 ? 2 : 1));
+    // 委托簿交叉中心随竞价推进收敛到真实开盘价；两侧申报量差决定未匹配量与方向。
+    // 撮合价 / 匹配量 / 未匹配量全部由 matchAuction() 按上交所 3.5.2 三原则算出，不再硬编码。
+    const center = priceAt(sec);
+    const targetMatched = isEnd ? realLots : Math.max(1, Math.round(realLots * Math.pow(k, 1.7)));
+    const gap = isEnd ? 0 : Math.max(0, unmatchedAt(sec) + Math.round((rnd() - 0.5) * 90));
+    const buyBias = sec < 280;                        // 9:20 前虚假买单堆积，之后卖方堆积
+    const ob = makeOrderBook(center,
+      targetMatched + (buyBias ? gap : 0),
+      targetMatched + (buyBias ? 0 : gap));
+    const m = matchAuction(ob.bids, ob.asks, preClose);   // 开盘并列价取最接近前收
     pts.push({
       timestamp: Date.parse(`${iso}T${time}+08:00`),
       time,
       phase: 'open',
-      virtualPrice,
-      matchedQty: matched,
-      unmatchedQty: unmatched,
-      unmatchedSide,
+      virtualPrice: r2(m.price),
+      matchedQty: m.matchedQty,
+      unmatchedQty: m.unmatchedQty,
+      unmatchedSide: m.unmatchedSide,
       volume: isEnd ? realVolume : 0,                 // 竞价期间「价有量无」
       amount: isEnd ? realAmount : 0,
     });
   });
-  notes.push('集合竞价：历史交易日的 9:15–9:25 虚拟撮合快照属 Level-2 数据，免费公开接口无法回溯（AkShare / Tushare / Baostock / 聚宽 / 米筐 / 券商 L1 在该窗口均返回空；仅当日可通过 AKShare MCP get_stock_auction_tool 或通达信协议 get_call_auction 拉取后自行归档）。因此本数据为**锚定真实值 + 按竞价规则拟真 mock**：①真实锚点取同一交易日的昨收 1410.27、9:25 开盘价 1404.00、9:25 集合竞价成交量/额（= 分时 09:30 首点 15000 股 / 21060000 元 = 150 手），末点与真实值精确闭合；②按同花顺终端口径生成 69 个 9 秒节点（9:15:00–9:25:00，9:19:57→9:20:00 与 9:24:57→9:25:00 各 3 秒）；③拟真行为：价格只在少数节点跳变形成长水平段（9:15 虚假买单托高 → 9:19:57 集中撤单跳水 → 9:20 后不可撤单缓慢收敛 → 9:25 真实开盘价）、虚拟匹配量单调不减且后期加速、未匹配量撤单后跳降并衰减到 0、可撤单期买方堆积(红)为主后转卖方堆积(绿)；④仅 9:25 产生成交量，其余节点「价有量无」。');
+  notes.push('集合竞价：历史交易日的 9:15–9:25 虚拟撮合快照属 Level-2 数据，免费公开接口无法回溯（AkShare / Tushare / Baostock / 聚宽 / 米筐 / 券商 L1 在该窗口均返回空；仅当日可通过 AKShare MCP get_stock_auction_tool 或通达信协议 get_call_auction 拉取后自行归档）。因此本数据为**锚定真实值 + 按上交所《交易规则》3.5.2 三原则撮合的示意委托簿**：虚拟撮合价 / 匹配量 / 未匹配量 / 方向全部由 `matchAuction()` 按「最大成交量 → 未成交量最小 → 最接近前收」算出，不再硬编码阶梯价或随机方向；委托簿为集中在撮合价的示意簿（L2 逐笔委托无法回溯）。①真实锚点取同一交易日的昨收 1410.27、9:25 开盘价 1404.00、9:25 集合竞价成交量/额（= 分时 09:30 首点 15000 股 / 21060000 元 = 150 手），末点与真实值精确闭合；②按同花顺终端口径生成 69 个 9 秒节点（9:15:00–9:25:00，9:19:57→9:20:00 与 9:24:57→9:25:00 各 3 秒）；③拟真行为：价格只在少数节点跳变形成长水平段（9:15 虚假买单托高 → 9:19:57 集中撤单跳水 → 9:20 后不可撤单缓慢收敛 → 9:25 真实开盘价）、虚拟匹配量单调不减且后期加速、未匹配量撤单后跳降并衰减到 0、可撤单期买方堆积(红)为主后转卖方堆积(绿)；④仅 9:25 产生成交量，其余节点「价有量无」。');
   return pts;
 }
 
@@ -348,23 +369,25 @@ function buildClosingAuction(bars, intraday, iso) {
     const time = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
     const isEnd = idx === secs.length - 1;             // 15:00:00 统一撮合
     const k = sec / TOTAL;
-    const matched = isEnd ? realLots : Math.max(1, Math.round(realLots * Math.pow(k, 1.5)));
-    const unmatched = isEnd ? 0
-      : Math.max(0, unmatchedAt(sec) + Math.round((rnd() - 0.5) * 60));
-    const unmatchedSide = unmatched === 0 ? 0 : (rnd() > 0.25 ? 1 : 2);  // 收盘微涨，买方堆积为主
+    // 同样用三原则撮合；收盘并列价参考最近成交价（14:57 连续竞价末价）
+    const center = priceAt(sec);
+    const targetMatched = isEnd ? realLots : Math.max(1, Math.round(realLots * Math.pow(k, 1.5)));
+    const gap = isEnd ? 0 : Math.max(0, unmatchedAt(sec) + Math.round((rnd() - 0.5) * 60));
+    const ob = makeOrderBook(center, targetMatched + gap, targetMatched);  // 收盘买方堆积为主
+    const m = matchAuction(ob.bids, ob.asks, startPrice);
     pts.push({
       timestamp: Date.parse(`${iso}T${time}+08:00`),
       time,
       phase: 'close',
-      virtualPrice: priceAt(sec),
-      matchedQty: matched,
-      unmatchedQty: unmatched,
-      unmatchedSide,
+      virtualPrice: r2(m.price),
+      matchedQty: m.matchedQty,
+      unmatchedQty: m.unmatchedQty,
+      unmatchedSide: m.unmatchedSide,
       volume: isEnd ? realVolume : 0,
       amount: isEnd ? realAmount : 0,
     });
   });
-  notes.push('尾盘竞价（收盘集合竞价 14:57–15:00）：上交所 2018-08-20 起对股票实施 3 分钟收盘集合竞价，可申报不可撤单、行情揭示同开盘集合竞价。历史虚拟撮合快照同样属 L2 无法回溯，故与开盘竞价一致采用**锚定真实 + 拟真 mock**：①真实锚点取 14:57 连续竞价末价 1434.52、15:00 收盘价 1435.26（= 日 K close）、15:00 集合竞价成交量 177300 股 / 254471605.07 元 = 1773 手，末点精确闭合；②按同花顺终端口径生成 21 个 9 秒节点（14:57:00–15:00:00）；③真实分时里 14:58/14:59 成交量为 0（价有量无），仅 15:00 统一撮合有量；④不可撤单期虚拟匹配量单调不减、未匹配量逐步被吸收到 0、买方堆积(红)为主。');
+  notes.push('尾盘竞价（收盘集合竞价 14:57–15:00）：上交所 2018-08-20 起对股票实施 3 分钟收盘集合竞价，可申报不可撤单、行情揭示同开盘集合竞价。历史虚拟撮合快照同样属 L2 无法回溯，故与开盘竞价一致采用**锚定真实 + 三原则撮合的示意委托簿**（并列价参考最近成交价 14:57 末价）：①真实锚点取 14:57 连续竞价末价 1434.52、15:00 收盘价 1435.26（= 日 K close）、15:00 集合竞价成交量 177300 股 / 254471605.07 元 = 1773 手，末点精确闭合；②按同花顺终端口径生成 21 个 9 秒节点（14:57:00–15:00:00）；③真实分时里 14:58/14:59 成交量为 0（价有量无），仅 15:00 统一撮合有量；④不可撤单期虚拟匹配量单调不减、未匹配量逐步被吸收到 0、买方堆积(红)为主。');
   return pts;
 }
 
@@ -428,7 +451,7 @@ function buildDepth(bars, iso) {
 // ---------------------------------------------------------------- 执行
 const bars = buildBars();
 const { iso, points: intraday } = buildIntraday();
-const chips = buildChips(bars);
+const chips = buildChips(bars, CHIPS_OPTS);
 const auction = buildAuction(bars, intraday, iso);
 const closingAuction = buildClosingAuction(bars, intraday, iso);
 const trades = buildTrades(intraday, iso);
@@ -448,6 +471,7 @@ const manifest = {
   open: last.open,
   close: last.close,
   floatShares: 1250081601,
+  limitRate: LIMIT_RATE,          // 按代码/名称识别板块：主板 10% / 创业科创 20% / ST 主板 5% / 北交所 30%
   session: [{ open: '09:30', close: '11:30' }, { open: '13:00', close: '15:00' }],
   afterHours: { open: '15:01', close: '15:30' },
   palette: 'light',

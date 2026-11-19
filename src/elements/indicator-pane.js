@@ -3,7 +3,8 @@
 import { PaneElement, paneBg, axisScaleText } from './pane-base.js';
 import { rgba, rect, line, dashedH, polyline, makeScale } from '../gl/geometry.js';
 import { PALETTE, AXIS_GUTTER_L } from '../types.js';
-import { adaptiveMAPeriods, adaptiveMACDParams } from '../core/indicator-params.js';
+import { adaptiveMAPeriods } from '../core/indicator-params.js';
+import { intradayVolumeRatioSeries } from '../compute/indicators.js';
 
 const UNIT_STEPS = [
   { d: 1, u: '' },
@@ -47,7 +48,16 @@ export class IndicatorPane extends PaneElement {
     }
     let res, vis;
 
-    if (isIntraday && (name === 'VOL' || name === 'AMOUNT')) {
+    if (isIntraday && name === 'VOL_RATIO') {
+      // 分时量比曲线：逐点按当日累计开市分钟归一化，不再拿日线序列末 N 个凑数
+      const pts = ctx.getSeries();
+      const daily = ctx.dataset?.bars || [];
+      const prev5 = daily.slice(-6, -1);
+      const avg5Daily = prev5.length
+        ? prev5.reduce((s, b) => s + (b.volume || 0), 0) / prev5.length : 0;
+      res = { type: 'line', values: intradayVolumeRatioSeries(pts, avg5Daily) };
+      vis = res.values.slice(ctx.viewport.start, ctx.viewport.end);
+    } else if (isIntraday && (name === 'VOL' || name === 'AMOUNT')) {
       const pts = ctx.getSeries();          // 分时模式已截到 14:57，尾盘由竞价段单独绘制
       const key = name === 'VOL' ? 'volume' : 'amount';
       const pre = ctx.dataset.manifest.preClose;
@@ -58,7 +68,7 @@ export class IndicatorPane extends PaneElement {
       vis = res.values.slice(ctx.viewport.start, ctx.viewport.end);
     } else {
       const bars = ctx.getBars();
-      const indParams = name === 'MACD' ? adaptiveMACDParams(bars.length) : {};
+      const indParams = name === 'MACD' ? ctx.getMACDParams() : {};
       res = ctx.compute.indicator(name === 'VOL_RATIO' ? 'VOL_RATIO' : name, bars, indParams);
       vis = isIntraday
         ? res.values.slice(Math.max(0, res.values.length - ctx.visibleCount()))
@@ -110,17 +120,26 @@ export class IndicatorPane extends PaneElement {
       }
     } else if (res.type === 'macd') {
       let lo = Infinity, hi = -Infinity;
-      for (const v of vis) { lo = Math.min(lo, v.dif, v.dea, v.macd); hi = Math.max(hi, v.dif, v.dea, v.macd); }
+      // 预热期为 null：不参与纵轴归一化，也不绘制（通达信在预热段留空）
+      for (const v of vis) {
+        for (const val of [v.dif, v.dea, v.macd]) {
+          if (val == null || !Number.isFinite(val)) continue;
+          lo = Math.min(lo, val); hi = Math.max(hi, val);
+        }
+      }
+      if (!Number.isFinite(lo)) { lo = -1; hi = 1; }
       const y = makeScale(lo, hi, top, bottom);
       this.axis = { lo, hi, name: 'MACD', top, bottom, pad: 0.08 };
       const zero = y(0);
       line(out, pr.x, zero, pr.x + pr.w, zero, 1, rgba(PALETTE.grid));
       vis.forEach((v, i) => {
+        if (v.macd == null) return;
         const x = xAt(i);
         rect(out, x - bw / 2, Math.min(zero, y(v.macd)), x + bw / 2, Math.max(zero, y(v.macd)), rgba(v.macd >= 0 ? PALETTE.up : PALETTE.down));
       });
       for (const key of ['dif', 'dea']) {
-        const pts = vis.map((v, i) => [xAt(i), y(v[key])]);
+        const pts = [];
+        vis.forEach((v, i) => { if (v[key] != null) pts.push([xAt(i), y(v[key])]); });
         polyline(out, pts, 1.3, rgba(key === 'dif' ? PALETTE.avg : PALETTE.chipLoss));
       }
     } else if (res.type === 'multi-line') {

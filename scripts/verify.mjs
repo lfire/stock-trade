@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // 可重跑校验：示例数据结构与口径、纯函数计算、源码语法、页面引用完整性。
+// 注意：下方按模块读取的源码变量（ppSrc / aggSrc / scSrc / genSrc / dtsText 等）均为文件级 const，
+// 新增断言前先检索已有声明并复用，不要重复 const 导致模块整体 SyntaxError。
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rect, line, rgba, makeScale } from '../src/gl/geometry.js';
-import { computeIndicator, ema } from '../src/compute/indicators.js';
+import { computeIndicator, ema, intradayVolumeRatio } from '../src/compute/indicators.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const problems = [];
@@ -35,17 +37,35 @@ ok(bars.every((b) => VALID_STATES.includes(b.limitState || '')), 'limitState 取
 ['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'].forEach((s) =>
   ok(bars.some((b) => b.limitState === s), `缺少 ${s} 样本`));
 ok(bars.every((b, i) => i === 0 || Math.abs(b.preClose - bars[i - 1].close) < 0.02), '注入后 preClose 链条断裂');
-const LIMIT_RATE = 0.10, epsOf = (b) => b.preClose * 0.005;
+// 独立基准：比例取自 manifest（不复用生成脚本的常量），容差按交易所最小变动单位固定 0.011 元
+const LIMIT_RATE = m.limitRate ?? 0.10;
+const PRICE_EPS = 0.011;
+const upPx = (b) => Math.round(b.preClose * (1 + LIMIT_RATE) * 100) / 100;
+const dnPx = (b) => Math.round(b.preClose * (1 - LIMIT_RATE) * 100) / 100;
 ok(bars.filter((b) => b.limitState === 'limitUp').every((b) =>
-  Math.abs(b.close - b.preClose * (1 + LIMIT_RATE)) <= epsOf(b)), '涨停样本收盘价未封板');
+  Math.abs(b.close - upPx(b)) <= PRICE_EPS), '涨停样本收盘价未封板');
 ok(bars.filter((b) => b.limitState === 'limitDown').every((b) =>
-  Math.abs(b.close - b.preClose * (1 - LIMIT_RATE)) <= epsOf(b)), '跌停样本收盘价未封板');
+  Math.abs(b.close - dnPx(b)) <= PRICE_EPS), '跌停样本收盘价未封板');
 ok(bars.filter((b) => b.limitState === 'limitUpBroken').every((b) =>
-  Math.abs(b.high - b.preClose * (1 + LIMIT_RATE)) <= epsOf(b)
-  && Math.abs(b.close - b.preClose * (1 + LIMIT_RATE)) > epsOf(b)), '涨停炸板形态不符');
+  Math.abs(b.high - upPx(b)) <= PRICE_EPS
+  && Math.abs(b.close - upPx(b)) > PRICE_EPS), '涨停炸板形态不符');
 ok(bars.filter((b) => b.limitState === 'limitDownBroken').every((b) =>
-  Math.abs(b.low - b.preClose * (1 - LIMIT_RATE)) <= epsOf(b)
-  && Math.abs(b.close - b.preClose * (1 - LIMIT_RATE)) > epsOf(b)), '跌停炸板形态不符');
+  Math.abs(b.low - dnPx(b)) <= PRICE_EPS
+  && Math.abs(b.close - dnPx(b)) > PRICE_EPS), '跌停炸板形态不符');
+// 预置期望值（由独立标准公式在 600519.SH 前复权 935 根日 K / 截至 2026-11-13 数据上算出）
+// 改动公式会直接导致这些断言失败，替代原先「用同一实现自校验」的循环论证
+const expectClose = (actual, expected, label) =>
+  ok(Math.abs(actual - expected) < 1e-5, `${label}：${actual} ≠ 基准 ${expected}`);
+const macdNow = computeIndicator('MACD', bars, {}).values;
+expectClose(macdNow[25].dif, -6.501693, 'MACD DIF[25]');
+expectClose(macdNow[40].dea, -5.246571, 'MACD DEA[40]');
+expectClose(macdNow.at(-1).macd, -2.019009, 'MACD 柱[末根]');
+const kdjNow = computeIndicator('KDJ', bars, {}).values;
+expectClose(kdjNow.at(-1).k, 51.534178, 'KDJ K[末根]');
+expectClose(kdjNow.at(-1).d, 63.215194, 'KDJ D[末根]');
+const avg5Daily = bars.slice(-6, -1).reduce((s, b) => s + b.volume, 0) / 5;
+expectClose(intradayVolumeRatio(intra.filter((p) => p.time <= '15:00'), avg5Daily, '09:35'),
+  2.469124, '分时量比@09:35');
 ok(intra.filter((p) => p.session !== 'afterHours').length === 242, '常规时段不是 242 点');
 ok(intra.every((p) => p.volume >= 0 && p.amount >= 0), '分时增量出现负数');
 ok(Math.abs(intra[0].avgPrice - intra[0].price) < 0.01, '分时首点均价异常');
@@ -329,6 +349,65 @@ ok(storeSrc.includes('if (!base) throw') && storeSrc.includes('Object.entries(ma
 ok(!scSrc.includes("|| './src/data'"), '组件仍无条件 fetch ./src/data');
 ok(dtsText.includes("'webglcontext-restored'") && dtsText.includes("export { bindStockChart }"),
   '.d.ts 缺少新增事件或 React 薄封装 re-export');
+// P0 算法口径：防止 EMA 冷启动 / 日线量比 / 序号分桶回归
+const indSrc = readFileSync(path.join(root, 'src/compute/indicators.js'), 'utf8');
+ok(indSrc.includes('前 N 个值取简单平均') && indSrc.includes('out[n - 1] = prev'),
+  'EMA 未用 SMA 初始化');
+ok(indSrc.includes('dif.findIndex((v) => v != null)'), 'MACD DEA 未在 DIF 有效段上递推');
+ok(indSrc.includes('intradayVolumeRatio') && indSrc.includes('elapsedMarketMinutes'),
+  '缺少分时量比（累计开市分钟）实现');
+const aggSrc = readFileSync(path.join(root, 'src/core/bar-aggregator.js'), 'utf8');
+ok(aggSrc.includes('intradayBucket') && aggSrc.includes('SESSION_MINUTES'),
+  '分钟 K 未按时段边界分桶');
+ok(readFileSync(path.join(root, 'src/elements/price-pane.js'), 'utf8').includes("'日量比'"),
+  'K 线面板未标注日线量比口径');
+ok(existsSync(path.join(root, 'scripts/tests/algorithm-regression.test.mjs')),
+  '缺少独立基准的数值回归测试');
+// MACD 参数：固定默认 + 可配置
+const ipSrc = readFileSync(path.join(root, 'src/core/indicator-params.js'), 'utf8');
+ok(ipSrc.includes('DEFAULT_MACD_PARAMS') && !ipSrc.includes('if (count >= 40)'),
+  'MACD 参数仍随 K 线根数自适应');
+ok(ipSrc.includes('parseMACDParams') && ipSrc.includes('resolveMACDParams'),
+  '缺少 MACD 参数配置解析');
+ok(scSrc.includes('setMACDParams(') && scSrc.includes("'macd'"),
+  '组件缺少 MACD 参数配置入口');
+ok(readFileSync(path.join(root, 'src/elements/indicator-pane.js'), 'utf8').includes('ctx.getMACDParams()'),
+  '副图未从组件统一真源读取 MACD 参数');
+ok(dtsText.includes("'macd-params-change'") && dtsText.includes('setMACDParams('),
+  '.d.ts 缺少 MACD 参数契约');
+ok(html.includes("urlParams.get('macd')"), '示例页缺少 ?macd= 配置入口');
+// P1 算法口径
+ok(existsSync(path.join(root, 'scripts/auction-match.mjs'))
+  && existsSync(path.join(root, 'scripts/limit-rules.mjs')),
+  '缺少集合竞价撮合 / 涨跌停规则模块');
+const genSrc = readFileSync(path.join(root, 'scripts/build-sample-data.mjs'), 'utf8');
+ok(genSrc.includes('matchAuction(') && !genSrc.includes('const unmatchedSide = unmatched === 0'),
+  '竞价虚拟价仍为硬编码 + 随机方向');
+ok(genSrc.includes('b.amount / b.volume'), '筹码三角分布峰值未取当日成交均价');
+ok(genSrc.includes('chips-decay') && genSrc.includes('chips-shape'), '筹码模型参数不可配置');
+ok(m.limitRate === 0.10, 'manifest 缺少按板块识别的涨跌幅比例');
+const chipPaneSrc = readFileSync(path.join(root, 'src/elements/chip-pane.js'), 'utf8');
+ok(chipPaneSrc.includes('平均成本(COST50)') && chipPaneSrc.includes('集中度(面板)'),
+  '筹码 UI 术语未对齐软件面板口径');
+ok(scSrc.includes("row('平均成本', c.avgCost") && scSrc.includes('集中度(面板口径)'),
+  '统计面板仍把加权平均当成平均成本');
+ok(existsSync(path.join(root, 'scripts/tests/p1-algorithm.test.mjs')),
+  '缺少 P1 数值回归测试');
+// 分时头部明细：删除「价 / 量比」，新增「高 / 低」（取当日日 K 的 high/low；复用上方 ppSrc）
+ok(ppSrc.includes("{ label: '高'") && ppSrc.includes("{ label: '低'")
+  && ppSrc.includes('today.high') && ppSrc.includes('today.low'),
+  '分时明细缺少今日最高/最低价');
+ok(!ppSrc.includes("{ label: '价'") && !ppSrc.includes("{ label: '量比'"),
+  '分时明细仍显示「价」或「量比」');
+// K 线周期：11 个选项、顺序、默认日 K（复用上方 aggSrc）
+ok(aggSrc.includes("DEFAULT_PERIOD = '1d'"), '缺少默认日 K 常量');
+for (const key of ['1m', '5m', '15m', '30m', '60m', '120m', '1d', '1w', '1M', '1Q', '1Y']) {
+  ok(aggSrc.includes(`key: '${key}'`), `PERIODS 缺少 ${key}`);
+}
+ok(aggSrc.includes("label: '120 分钟'"), '120m 标签应为「120 分钟」');
+ok(html.includes('selPeriod.value = chart.getPeriod()'), '周期下拉未显式选中默认日 K');
+ok(readFileSync(path.join(root, 'src/core/chart-context.js'), 'utf8').includes('DEFAULT_PERIOD'),
+  '组件未使用默认周期常量');
 const dbSrc = readFileSync(path.join(root, 'src/elements/depth-book.js'), 'utf8');
 ok(dbSrc.includes('var(--sc-bar-h') && dbSrc.includes('var(--sc-split-h'),
   '盘口两条行或买卖间隙未用统一变量');

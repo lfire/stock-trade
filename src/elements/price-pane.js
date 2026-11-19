@@ -208,22 +208,23 @@ export class PricePane extends PaneElement {
         { label: '开', value: b.open.toFixed(2) },
         { label: '高', value: b.high.toFixed(2) },
         { label: '低', value: b.low.toFixed(2) },
-        { label: '量比', value: vr != null ? vr.toFixed(2) : '—' },
+        { label: '日量比', value: vr != null ? vr.toFixed(2) : '—' },
         { label: '换', value: `${(b.volume / m.floatShares * 100).toFixed(2)}%` },
         { label: '量', value: fmtQty(b.volume) },
         { label: '额', value: fmtMoney(b.amount ?? 0) },
       ];
       note = !item ? '最新 · 划过图表查看明细' : (b.limitState ? LIMIT_LABEL[b.limitState] : '');
     } else {
-      // 分时六项明细：价 / 均价 / 量比 / 成交量 / 成交额 / 换手率（换手按当日累计成交量算）
+      // 分时六项明细：今日最高 / 最低 / 均价 / 成交量 / 成交额 / 换手率（换手按当日累计成交量算）
       const p = item || last;
-      const series = ctx.getSeries();
-      const at = ctx.crosshair ?? (series.length - 1);
-      const vr = ctx.compute.indicator('VOL_RATIO', series, { n: 5 }).values[at]?.value;
+      // 今日高/低取当日日 K 的 high/low：它含盘中瞬时极值与集合竞价，
+      // 比按每分钟分时点取 max/min 更贴近行情软件显示的当日最高/最低价。
+      const daily = ctx.dataset?.bars || [];
+      const today = daily[daily.length - 1] || {};
       metrics = [
-        { label: '价', value: (p.price ?? m.close).toFixed(2) },
+        { label: '高', value: (today.high ?? m.close).toFixed(2) },
+        { label: '低', value: (today.low ?? m.close).toFixed(2) },
         { label: '均', value: (p.avgPrice ?? m.close).toFixed(2) },
-        { label: '量比', value: vr != null ? vr.toFixed(2) : '—' },
         { label: '量', value: fmtQty(p.volume ?? 0) },
         { label: '额', value: fmtMoney(p.amount ?? 0) },
         { label: '换', value: `${((p.cumulativeVolume ?? 0) / m.floatShares * 100).toFixed(2)}%` },

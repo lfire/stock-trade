@@ -98,6 +98,8 @@ export interface ChartDataset {
 
 // ---- 组件状态与配置 ----
 export interface MAConfig { period: number; color: string; }
+/** MACD 参数（固定默认 12,26,9，可通过 setMACDParams 或 macd 属性配置） */
+export interface MACDParams { fast: number; slow: number; signal: number; }
 export interface SubplotConfig { index: number; indicator: string; height: number; hidden: boolean; }
 export interface SubplotLayout { x: number; y: number; w: number; h: number; index: number; indicator: string; }
 export interface LayoutHints { auctionWidth: number; chipWidth: number; sideWidth: number; }
@@ -146,6 +148,7 @@ export interface StockChartEventMap extends HTMLElementEventMap {
   'period-change': CustomEvent<{ period: string; label: string; count: number }>;
   'chip-mode-change': CustomEvent<{ mode: ChipMode }>;
   'ma-config-change': CustomEvent<{ list: MAConfig[] }>;
+  'macd-params-change': CustomEvent<{ params: MACDParams }>;
   'subplot-config-change': CustomEvent<{ config: SubplotConfig[] }>;
   'compute-mode-change': CustomEvent<{ mode: string; threads: number; reason: string }>;
   'theme-change': CustomEvent<{ theme: string | null; palette: Record<string, string> }>;
@@ -208,6 +211,9 @@ export declare class StockChart extends HTMLElement {
   setSubplotIndicator(index: number, name: string): unknown;
   getMovingAverages(): MAConfig[];
   setMovingAverages(list: MAConfig[]): MAConfig[];
+  /** 设置 MACD 参数：对象或 '12,26,9' 字符串，非法输入回退默认 */
+  setMACDParams(input: Partial<MACDParams> | string): MACDParams;
+  getMACDParams(): MACDParams;
   addMovingAverage(cfg: Partial<MAConfig>): MAConfig[];
   removeMovingAverage(period: number): MAConfig[];
   updateMovingAverage(period: number, patch: Partial<MAConfig>): MAConfig[];
@@ -308,6 +314,8 @@ export interface StockChartJSXAttributes extends CustomElementAttributes {
   symbol?: string;
   auction?: 'on' | 'off';
   chips?: 'on' | 'off';
+  /** MACD 参数，格式 '12,26,9'；缺省为固定默认 (12,26,9) */
+  macd?: string;
   height?: string | number;
 }
 

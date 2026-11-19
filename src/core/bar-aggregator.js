@@ -1,11 +1,16 @@
-// K 线多周期聚合：日 K → 周 / 月 / 季 / 年；当日分时 → 5 / 30 / 60 / 120 分钟。
+// K 线多周期聚合：当日分时 → 1 / 5 / 15 / 30 / 60 / 120 分钟；日 K → 周 / 月 / 季 / 年。
 // 输出与 bars_1d.json 相同的字段结构，额外带 label 供时间轴与 hover 明细显示。
+/** 默认周期：日 K（周期列表按分钟→日→周月年排序，故不能用 PERIODS[0] 兜底） */
+export const DEFAULT_PERIOD = '1d';
+
 export const PERIODS = [
-  { key: '1d', label: '日 K', kind: 'daily' },
+  { key: '1m', label: '1 分钟', kind: 'minute', size: 1 },
   { key: '5m', label: '5 分钟', kind: 'minute', size: 5 },
+  { key: '15m', label: '15 分钟', kind: 'minute', size: 15 },
   { key: '30m', label: '30 分钟', kind: 'minute', size: 30 },
   { key: '60m', label: '60 分钟', kind: 'minute', size: 60 },
-  { key: '120m', label: '2 小时', kind: 'minute', size: 120 },
+  { key: '120m', label: '120 分钟', kind: 'minute', size: 120 },
+  { key: '1d', label: '日 K', kind: 'daily' },
   { key: '1w', label: '周 K', kind: 'daily' },
   { key: '1M', label: '月 K', kind: 'daily' },
   { key: '1Q', label: '季 K', kind: 'daily' },
@@ -13,7 +18,8 @@ export const PERIODS = [
 ];
 
 export const PERIOD_LABEL = Object.fromEntries(PERIODS.map((p) => [p.key, p.label]));
-export const periodMeta = (key) => PERIODS.find((p) => p.key === key) || PERIODS[0];
+export const periodMeta = (key) => PERIODS.find((p) => p.key === key)
+  || PERIODS.find((p) => p.key === DEFAULT_PERIOD);
 
 /** ISO 周（周一为一周起点），用于周 K 分组 */
 function isoWeek(dateStr) {
@@ -78,16 +84,37 @@ export function aggregateDaily(bars, period) {
 }
 
 /**
- * 当日分时 → 分钟 K。分时数据是一分钟一个价格点，按序号每 size 个聚合成一根，
+ * 当日分时 → 分钟 K。按 A 股交易时段边界分组（上午 9:30–11:30、下午 13:00–15:00 各自独立），
+ * 每 size 分钟一根；11:30 / 15:00 的收盘点归入所在时段最后一根，绝不跨午休成根。
  * open/close 取首末价、high/low 取区间极值、量额求和；preClose 取上一根收盘。
- * 注意：示例数据只有当日 267 点，分钟级周期的历史深度有限。
  */
+const AM_START = 9 * 60 + 30, AM_END = 11 * 60 + 30;
+const PM_START = 13 * 60, SESSION_MINUTES = 120;
+const clockMinutes = (t) => {
+  const [h, m] = String(t).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+};
+
+/** 分时点所属 K 线桶：'0:0'…（0=上午 / 1=下午，冒号后为时段内第几根） */
+export function intradayBucket(time, size) {
+  const n = clockMinutes(time);
+  const isPM = n > AM_END && n >= PM_START;
+  const offset = isPM ? n - PM_START : n - AM_START;
+  // 收盘点（11:30 / 15:00）归入该时段最后一根，保证 120 分钟恰好产出 120/size 根
+  const clamped = Math.max(0, Math.min(offset, SESSION_MINUTES - 1));
+  return `${isPM ? 1 : 0}:${Math.floor(clamped / size)}`;
+}
+
 export function aggregateIntraday(series, size, manifest) {
   const pts = (series || []).filter((p) => p.time <= '15:00' && p.volume > 0);
+  const groups = new Map();
+  for (const p of pts) {
+    const key = intradayBucket(p.time, size);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
   const out = [];
-  for (let i = 0; i < pts.length; i += size) {
-    const g = pts.slice(i, i + size);
-    if (!g.length) break;
+  for (const g of groups.values()) {
     const first = g[0], last = g[g.length - 1];
     let high = -Infinity, low = Infinity, volume = 0, amount = 0;
     for (const p of g) {

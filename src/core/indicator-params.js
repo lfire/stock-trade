@@ -23,15 +23,34 @@ export function adaptiveMAPeriods(periods, count) {
   return valid.length ? valid : [Math.min(2, Math.max(1, count))];
 }
 
-/** MACD 参数按可用根数分档；根数 ≥40 保持经典 (12,26,9) */
-export function adaptiveMACDParams(count) {
-  if (count >= 40) return { fast: 12, slow: 26, signal: 9 };
-  if (count >= 20) return { fast: 6, slow: 13, signal: 5 };
-  if (count >= 10) return { fast: 3, slow: 6, signal: 3 };
-  if (count >= 5) return { fast: 2, slow: 4, signal: 2 };
-  if (count >= 3) return { fast: 2, slow: 3, signal: 2 };
-  // signal 至少 2，否则 DEA 恒等于 DIF、柱全为 0
-  return { fast: 1, slow: 2, signal: 2 };
+/** MACD 固定默认参数：通达信 / 同花顺 (12,26,9)。不再随 K 线根数自动收缩。 */
+export const DEFAULT_MACD_PARAMS = Object.freeze({ fast: 12, slow: 26, signal: 9 });
+
+/** 合并并校验 MACD 配置：均为正整数、slow > fast；非法输入回退默认值（不抛错） */
+export function resolveMACDParams(config = {}) {
+  const merged = { ...DEFAULT_MACD_PARAMS, ...(config || {}) };
+  const { fast, slow, signal } = merged;
+  const valid = [fast, slow, signal].every((v) => Number.isInteger(v) && v >= 1)
+    && slow > fast && signal >= 1;
+  return valid ? { fast, slow, signal } : { ...DEFAULT_MACD_PARAMS };
+}
+
+/** 解析 '12,26,9' / '12 26 9' 或 {fast,slow,signal}；非法输入回退默认 */
+export function parseMACDParams(input) {
+  if (input && typeof input === 'object') return resolveMACDParams(input);
+  if (typeof input !== 'string') return resolveMACDParams();
+  const nums = input.split(/[\s,;]+/).filter(Boolean).map(Number);
+  return nums.length === 3
+    ? resolveMACDParams({ fast: nums[0], slow: nums[1], signal: nums[2] })
+    : resolveMACDParams();
+}
+
+/**
+ * 兼容旧调用：MACD 参数固定为默认 (12,26,9)，可用 config 覆盖；count 参数保留但不再参与计算。
+ * 短序列下预热不足属通达信正常语义（预热段留空），需要时可显式配置更小参数。
+ */
+export function adaptiveMACDParams(_count, config) {
+  return resolveMACDParams(config);
 }
 
 export const maParamsText = (periods) => periods.map((p) => `MA${p}`).join('/');

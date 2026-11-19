@@ -6,9 +6,10 @@
 import { PALETTE, AXIS_GUTTER_L, AXIS_GUTTER_R, LAYOUT, withPalette } from '../types.js';
 import { rgba, rect, line } from '../gl/geometry.js';
 import { buildPhaseGeometry } from './auction-layer.js';
+import { DEFAULT_MACD_PARAMS, resolveMACDParams } from './indicator-params.js';
 import { createComputeEngine } from '../compute/engine.js';
 import { WebGL2Renderer } from '../gl/renderer.js';
-import { PERIODS, PERIOD_LABEL, buildBars } from './bar-aggregator.js';
+import { PERIODS, PERIOD_LABEL, DEFAULT_PERIOD, buildBars } from './bar-aggregator.js';
 
 /** 每个副图上方独立信息栏的高度（切换下拉 + 指标数值，不画在图上） */
 const SUBPLOT_INFO_H = LAYOUT.rowH;   // 副图信息栏与数据行同高
@@ -70,7 +71,7 @@ export class ChartContext {
     this.dataset = null;
     this.size = null;
     this.mode = 'candle';
-    this.period = '1d';               // K 线周期键，见 PERIODS
+    this.period = DEFAULT_PERIOD;     // K 线默认日 K，见 PERIODS
     this.barsCache = new Map();       // 各周期聚合结果缓存
     this.panes = [];
     this.viewport = { start: 0, end: 0 };
@@ -80,6 +81,7 @@ export class ChartContext {
     this.closingHover = null;         // 尾盘竞价段 hover 索引
     this.chipMode = 'histogram';
     this.maConfig = defaultMA(this.palette);      // K 线均线配置的单一真源（取实例色板）
+    this.macdParams = { ...DEFAULT_MACD_PARAMS };   // MACD 参数单一真源，默认通达信 (12,26,9)
     this.firstSubPane = null;         // 当前第一个可见副图（恒为成交量，与竞价列共用刻度）
     this.infoBars = [];               // 各副图上方信息栏的位置与指标
     this.pointer = null;              // 鼠标精确像素位置 {x,y}，坐标轴定位标签以它为中心
@@ -163,6 +165,15 @@ export class ChartContext {
     return this.setMA(this.maConfig.map((m) => (m.period === Number(period) ? { ...m, ...patch } : m)));
   }
 
+  /** 设置 MACD 参数（部分配置合并到当前值），非法值回退默认 (12,26,9) */
+  setMACDParams(patch = {}) {
+    this.macdParams = resolveMACDParams({ ...this.macdParams, ...(patch || {}) });
+    this.emit('macd-params-change', { params: { ...this.macdParams } });
+    this.requestRender();
+    return { ...this.macdParams };
+  }
+  getMACDParams() { return { ...this.macdParams }; }
+
   /** 竞价开关（同时控制开盘 9:15–9:25 与尾盘 14:57–15:00，仅分时模式生效） */
   setAuctionEnabled(on) {
     this.auctionEnabled = !!on;
@@ -229,7 +240,7 @@ export class ChartContext {
 
   /** 切换 K 线周期：重算序列、重置视口、清空光标 */
   setPeriod(period) {
-    const p = PERIODS.some((x) => x.key === period) ? period : '1d';
+    const p = PERIODS.some((x) => x.key === period) ? period : DEFAULT_PERIOD;
     if (p === this.period) return;
     this.period = p;
     this.crosshair = null;

@@ -12,12 +12,24 @@ export function sma(values, n) {
   return out;
 }
 
+/**
+ * 指数移动平均（通达信 / 同花顺 / Wind 口径）：
+ * 前 N 个值取简单平均作为首个 EMA，前 N−1 根为 null（预热期不产出），
+ * 之后按 α = 2/(N+1) 递推。pandas ewm(adjust=false) 的「首值冷启动」不适用于国内行情软件。
+ */
 export function ema(values, n) {
   const out = new Array(values.length).fill(null);
+  if (!Number.isFinite(n) || n < 1 || values.length < n) return out;
+  let sum = 0;
+  for (let i = 0; i < n; i += 1) {
+    if (!Number.isFinite(values[i])) return out;
+    sum += values[i];
+  }
+  let prev = sum / n;
+  out[n - 1] = prev;
   const k = 2 / (n + 1);
-  let prev = values[0];
-  out[0] = prev;
-  for (let i = 1; i < values.length; i += 1) {
+  for (let i = n; i < values.length; i += 1) {
+    if (!Number.isFinite(values[i])) return out;
     prev = values[i] * k + prev * (1 - k);
     out[i] = prev;
   }
@@ -33,13 +45,23 @@ export function ma(bars, n = 5, field = 'close') {
 export function macd(bars, { fast = 12, slow = 26, signal = 9 } = {}) {
   const closes = bars.map((b) => b.close);
   const ef = ema(closes, fast), es = ema(closes, slow);
-  const dif = closes.map((_, i) => ef[i] - es[i]);
-  const dea = ema(dif, signal);
+  // 两条价格 EMA 都需各自的预热期；未预热的位置保持 null，不参与后续递推
+  const dif = closes.map((_, i) => (ef[i] == null || es[i] == null ? null : ef[i] - es[i]));
+  // DEA 只在 DIF 的有效段上做 EMA（通达信 EMA(DIF,9) 的语义），避免把前段 null 当 0 污染
+  const first = dif.findIndex((v) => v != null);
+  const dea = new Array(bars.length).fill(null);
+  if (first >= 0) {
+    const tail = dif.slice(first);
+    const deaTail = ema(tail, signal);
+    for (let j = 0; j < deaTail.length; j += 1) {
+      if (deaTail[j] != null) dea[first + j] = deaTail[j];
+    }
+  }
   return bars.map((b, i) => ({
     time: b.timestamp,
     dif: dif[i],
     dea: dea[i],
-    macd: 2 * (dif[i] - dea[i]),
+    macd: dif[i] == null || dea[i] == null ? null : 2 * (dif[i] - dea[i]),
   }));
 }
 
@@ -58,7 +80,7 @@ export function kdj(bars, n = 9) {
   return out;
 }
 
-/** 量比（日线近似口径）：当日成交量 ÷ 前 N 日平均成交量。分时段口径需另用分钟数据。 */
+/** 量比（日线口径）：当日成交量 ÷ 前 N 日平均日成交量。分时量比请用 intradayVolumeRatio。 */
 export function volumeRatio(bars, n = 5) {
   const out = [];
   let sum = 0;
@@ -71,6 +93,53 @@ export function volumeRatio(bars, n = 5) {
     if (i >= n) sum -= bars[i - n].volume;
   }
   return out;
+}
+
+/** A 股交易时段：上午 9:30–11:30、下午 13:00–15:00，全天 240 分钟 */
+const AM_START = 9 * 60 + 30, AM_END = 11 * 60 + 30;
+const PM_START = 13 * 60, SESSION_MINUTES = 120, DAY_MINUTES = 240;
+
+/** 截至某个分时时刻的累计开市分钟数（扣除 11:30–13:00 午休，最小 1 分钟） */
+export function elapsedMarketMinutes(time) {
+  const [h, m] = String(time || '09:30').split(':').map(Number);
+  const n = (h || 0) * 60 + (m || 0);
+  if (n <= AM_END) return Math.max(1, Math.min(SESSION_MINUTES, n - AM_START));
+  if (n >= PM_START) return Math.max(1, SESSION_MINUTES + Math.min(SESSION_MINUTES, n - PM_START));
+  return SESSION_MINUTES;   // 午休期间按上午已收盘计
+}
+
+/**
+ * A 股分时量比（行情软件通行口径）：
+ *   量比 = (当日累计成交量 / 当日累计开市分钟) / (前 5 日平均每分钟成交量)
+ *   前 5 日平均每分钟成交量 = avg5DailyVolume / 240
+ * points 的 volume 为分时增量（股）；09:30 首点已含开盘集合竞价成交，不重复计入 auction 段。
+ * @param {Array} points 分时点（含 time 'HH:mm' 与 volume 增量）
+ * @param {number} avg5DailyVolume 前 5 个交易日平均日成交量（与 points 同单位）
+ * @param {string} [atTime] 计算时刻，默认最后一个点
+ */
+export function intradayVolumeRatio(points, avg5DailyVolume, atTime) {
+  const pts = (points || []).filter((p) => p.time <= '15:00');
+  if (!pts.length || !(avg5DailyVolume > 0)) return 1;
+  const at = atTime || pts[pts.length - 1].time;
+  let cum = 0;
+  for (const p of pts) if (p.time <= at) cum += p.volume || 0;
+  const perMinute = avg5DailyVolume / DAY_MINUTES;
+  const minutes = elapsedMarketMinutes(at);
+  return (cum / minutes) / perMinute;
+}
+
+/** 逐分时点生成量比曲线（供副图 VOL_RATIO 在分时模式下使用） */
+export function intradayVolumeRatioSeries(points, avg5DailyVolume) {
+  const pts = (points || []).filter((p) => p.time <= '15:00');
+  let cum = 0;
+  return pts.map((p) => {
+    cum += p.volume || 0;
+    const perMinute = avg5DailyVolume > 0 ? avg5DailyVolume / DAY_MINUTES : 0;
+    return {
+      time: p.time,
+      value: perMinute > 0 ? (cum / elapsedMarketMinutes(p.time)) / perMinute : 1,
+    };
+  });
 }
 
 export function computeIndicator(name, bars, params = {}) {
