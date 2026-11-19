@@ -19,10 +19,16 @@ export async function loadDataset(base) {
   };
 
   const manifest = await get('manifest.json');
-  // manifest.files 驱动：分片集合不再硬编码，缺失的分片自动跳过，由 setDataset() 归一化兜底
+  // manifest.files 驱动：分片集合不再硬编码；单个分片缺失时跳过（由 setDataset() 归一化兜底），
+  // 但 manifest 本身缺失仍属致命错误，由 get() 的三次重试后抛出。
   const result = { manifest };
   for (const [key, file] of Object.entries(manifest.files || {})) {
-    if (typeof file === 'string') result[key] = await get(file);
+    if (typeof file !== 'string') continue;
+    try {
+      result[key] = await get(file);
+    } catch (err) {
+      console.warn(`[stock-chart] 数据分片 ${file} 加载失败，已跳过：${err.message}`);
+    }
   }
   return result;
 }

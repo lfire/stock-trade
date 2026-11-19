@@ -8,8 +8,11 @@
 //   2. 委托量一律 100 股整数倍，档位按几何衰减分布，含少量十档外委托；
 //   3. 撤单遵守上交所规则：9:20–9:25、14:57–15:00 不可撤，其余时段按概率撤单；
 //   4. 收盘时刻未撤单挂单按价格聚合，与 depth 十档各档 volume 严格闭合。
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { limitPrices, limitRateFor } from './limit-rules.mjs';
+import { r2, mulberry32 } from './shared.mjs';
+import { TIME } from '../src/core/market-constants.js';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,16 +21,8 @@ const m = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
 const intra = JSON.parse(readFileSync(path.join(dir, m.files.intraday), 'utf8'));
 const depth = JSON.parse(readFileSync(path.join(dir, m.files.depth), 'utf8'))[0];
 
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// PRNG 与 r2 统一取自 scripts/shared.mjs；不同数据集用不同种子，互不干扰
 const rnd = mulberry32(2026111302);
-const r2 = (n) => Math.round(n * 100) / 100;
 const T = (s) => {
   const p = s.split(':').map(Number);
   return p[0] * 3600 + p[1] * 60 + (p[2] || 0);
@@ -38,10 +33,13 @@ const fmt = (sec) => [
   String(sec % 60).padStart(2, '0'),
 ].join(':');
 
-const LO = T('09:15:00'), OPEN = T('09:30:00'), NOON = T('11:30:00');
-const PM = T('13:00:00'), NO_CANCEL_1 = T('09:20:00'), NO_CANCEL_2 = T('14:57:00');
-const CLOSE = T('15:00:00');
-const limitLo = r2(m.preClose * 0.9), limitHi = r2(m.preClose * 1.1);
+// 时段字面量取自 market-constants.TIME 单一真源
+const LO = T(TIME.AUCTION_START), OPEN = T(TIME.OPEN), NOON = T(TIME.NOON);
+const PM = T(TIME.PM), NO_CANCEL_1 = T(TIME.NO_CANCEL_OPEN), NO_CANCEL_2 = T(TIME.NO_CANCEL_CLOSE);
+const CLOSE = T(TIME.CLOSE);
+// 涨跌停价按 manifest.limitRate（由代码/名称识别板块）计算，不再硬编码主板 0.9/1.1
+const { up: limitHi, down: limitLo } = limitPrices(m.preClose,
+  m.limitRate ?? limitRateFor(m.symbol, m.name));
 
 // 分时价格轨迹（排除盘后固定价段），用于给任意时刻的委托价定基准
 const curve = intra
@@ -115,7 +113,7 @@ function emit(time, price, volume, side, action, level, phase, opts = {}) {
 
 // ---------------------------------------------------------------- 1. 全天委托流
 const slots = [];
-for (let t = LO; t <= T('09:25:00'); t += 4) slots.push(t);        // 开盘集合竞价
+for (let t = LO; t <= T(TIME.AUCTION_END); t += 4) slots.push(t);        // 开盘集合竞价
 for (let t = OPEN; t <= NOON; t += 14) slots.push(t);               // 上午连续竞价
 for (let t = PM; t <= CLOSE; t += 14) slots.push(t);                // 下午连续竞价 / 收盘竞价
 for (const t of slots) {
@@ -141,7 +139,7 @@ for (const t of slots) {
   const cancelable = !((t >= NO_CANCEL_1 && t < OPEN) || (t >= NO_CANCEL_2 && t <= CLOSE));
   const r = rnd();
   const pool = openOrders.filter((x) => x.remain > 0);
-  // 1) 部分成交：逐笔成交只在连续竞价发生，按量扣减剩余量，委托继续留在簿里
+  // 1) 部分成交：逐笔明细只在连续竞价发生，按量扣减剩余量，委托继续留在簿里
   if (phase === 'continuous' && r < 0.22 && pool.length) {
     const x = pool[Math.floor(rnd() * pool.length)];
     const lots = Math.floor(x.remain / 100);
@@ -236,7 +234,9 @@ const bids = [...agg.values()].filter((x) => x.side === 'B').sort((a, b) => b.pr
 const asks = [...agg.values()].filter((x) => x.side === 'S').sort((a, b) => a.price - b.price);
 const pano = {
   timestamp: depth.timestamp,
-  time: '15:00:00',
+  time: TIME.CLOSE,
+  // 全景委托簿 / 逐笔委托属交易所 Level-2 增值行情，真实数据需展示或非展示许可
+  source: 'mock', license: 'public-demo', requiresAuthorization: true,
   mid: r2(midAt(CLOSE)),
   limitDown: limitLo,
   limitUp: limitHi,
@@ -279,6 +279,8 @@ const mkPano = (state) => {
     asks: [seal(limitLo, 960000, 720), ...pano.asks.filter((d) => d.price > limitLo)],
   };
 };
+// 场景对象的键即场景名（normal/limitUp/limitDown），不额外加顶层元数据以免破坏按 key 索引；
+// 来源与授权边界统一见 manifest.provenance 与 SOURCES.md，内层 pano 自带 source/license。
 const scenarios = {
   normal: { label: '普通', depth, pano },
   limitUp: { label: '涨停', depth: mkDepth('limitUp'), pano: mkPano('limitUp') },
@@ -288,7 +290,7 @@ const scenarioOut = path.join(dir, `depth_scenarios_${m.tradeDate.replace(/-/g, 
 writeFileSync(scenarioOut, `${JSON.stringify(scenarios)}\n`);
 
 // ---------------------------------------------------------------- 5. 合并分笔 ↔ 委托号关联
-// trades 是分钟级合并分笔（聚合粒度），真实逐笔成交才带买卖双方委托号；
+// trades 是分钟级合并分笔（聚合粒度），真实逐笔明细才带买卖双方委托号；
 // 这里把同一分钟内发生部分成交的委托号挂到合并分笔上，形成可追溯的关联（幂等重写）。
 const tradesFile = path.join(dir, m.files.trades);
 const trades = JSON.parse(readFileSync(tradesFile, 'utf8'));
@@ -314,6 +316,27 @@ for (const [k, file] of Object.entries(derived)) {
   if (meta.files[k] !== v) { meta.files[k] = v; metaChanged = true; }
 }
 if (metaChanged) writeFileSync(manifestFile, `${JSON.stringify(meta)}\n`);
+
+// 幂等追加：让 SOURCES.md 覆盖由本脚本生成的 3 个派生数据集（build-sample-data 只写 7 个）
+const sourcesFile = path.join(dir, 'SOURCES.md');
+const derivedNote = `<!-- derived-data -->
+## 派生数据集与 Level-2 授权边界（build-order-book.mjs）
+
+- \`orders\`（逐笔委托 NEW/FILL/CANCEL）、\`depthFull\`（全景委托簿）、\`depthScenarios\`（普通/涨停/跌停场景）均为**确定性 mock**，固定种子 \`mulberry32(2026111302)\`。公开接口无历史 Level-2 逐笔委托（见 \`src/data/raw/em_order_attempt.json\`）。
+- **数据可获得性**：按《证券交易所管理办法》第 38 条与沪深交易规则 5.1.3，交易所法定公开的是日频行情表与集合竞价即时行情（参考价/匹配量/未匹配量）；**十档盘口、逐笔明细、逐笔委托属 Level-2 增值行情**，真实数据需向上证所信息网络 / 深圳证券信息申请展示或非展示许可，且不得自行复制、转发或开发衍生品。本项目示例数据 \`license: 'public-demo'\`、\`requiresAuthorization: true\`，**非真实行情**。
+- \`depthFull\` 由 \`orders\` 事件流回放聚合，前十档用 \`depth\` 快照覆盖；\`depthScenarios\` 的封单量为硬编码示意值。
+- 逐数据集来源与授权摘要统一登记在 \`manifest.provenance\`，供消费者一次读取。
+
+<!-- /derived-data -->`;
+if (existsSync(sourcesFile)) {
+  const prev = readFileSync(sourcesFile, 'utf8');
+  const start = prev.indexOf('<!-- derived-data -->');
+  const end = prev.indexOf('<!-- /derived-data -->');
+  const next = start >= 0 && end > start
+    ? prev.slice(0, start) + derivedNote + prev.slice(end + '<!-- /derived-data -->'.length)
+    : `${prev.trimEnd()}\n\n${derivedNote}\n`;
+  writeFileSync(sourcesFile, next);
+}
 
 const active = orders.filter((o) => o.snapshot);
 console.log(`挂单数据：${orders.length} 条（收盘存活 ${active.length} 条）| NEW ${orders.filter((o) => o.action === 'NEW').length} / FILL ${orders.filter((o) => o.action === 'FILL').length} / CANCEL ${orders.filter((o) => o.action === 'CANCEL').length} | 合并分笔已关联 ${trades.filter((t) => t.ordIds?.length).length}/${trades.length} 条`);

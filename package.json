@@ -26,7 +26,20 @@
       "types": "./dist/frameworks/react.d.ts",
       "default": "./dist/frameworks/react.js"
     },
-    "./elements/*": "./dist/elements/*.js"
+    "./vue": {
+      "types": "./dist/frameworks/vue.d.ts",
+      "default": "./dist/frameworks/vue.js"
+    },
+    "./events": {
+      "types": "./dist/events.d.ts",
+      "default": "./dist/events.js"
+    },
+    "./core/*": "./dist/core/*",
+    "./gl/*": "./dist/gl/*",
+    "./compute/*": "./dist/compute/*",
+    "./frameworks/*": "./dist/frameworks/*",
+    "./elements/*.js": "./dist/elements/*.js",
+    "./elements/*": "./dist/elements/*"
   },
   "files": ["dist", "README.md", "LICENSE"],
   "sideEffects": false,
@@ -35,10 +48,11 @@
   },
   "scripts": {
     "fetch": "node scripts/fetch-public-data.mjs",
-    "data": "node scripts/build-sample-data.mjs",
+    "data": "node scripts/build-sample-data.mjs && node scripts/build-order-book.mjs",
     "check": "node scripts/verify.mjs",
+    "pretest": "npm run build",
     "test": "node --test scripts/tests/*.test.mjs",
-    "typecheck": "tsc --noEmit --lib es2020,dom --module esnext --moduleResolution bundler src/index.d.ts src/pure.d.ts",
+    "typecheck": "tsc --noEmit --lib es2020,dom --module esnext --moduleResolution bundler src/index.d.ts src/pure.d.ts src/events.d.ts src/frameworks/react.d.ts src/frameworks/vue.d.ts",
     "build": "node scripts/build.mjs",
     "prepublishOnly": "npm run check && npm run typecheck && npm test && npm run build",
     "serve": "node scripts/serve.mjs"

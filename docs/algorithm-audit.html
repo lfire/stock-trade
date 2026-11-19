@@ -62,7 +62,7 @@
       <li>EMA 改 SMA 初始化 + 预热期 null，DEA 只在 DIF 有效段递推 → 与通达信口径<strong>逐根最大偏差 0</strong>（修复前 15.44）。</li>
       <li>新增 <code>intradayVolumeRatio</code> / <code>intradayVolumeRatioSeries</code>，分时面板与副图改用它；K 线面板保留日线比值并改名「日量比」→ 09:35 显示 <strong>2.47</strong>（独立基准 2.4691）。</li>
       <li><code>aggregateIntraday</code> 改按上午/下午交易时段分桶 → 5m=48 / 30m=8 / 60m=4 / 120m=2 根，<strong>无跨午休 K 线</strong>。</li>
-      <li>新增 <code>scripts/tests/algorithm-regression.test.mjs</code>：8 个独立基准双实现测试。<code>adaptiveMACDParams</code> 已改为固定默认 (12,26,9) 并支持对象 / 字符串 / HTML 属性 / URL 参数配置。</li>
+      <li>新增 <code>scripts/tests/algorithm-regression.test.mjs</code>：8 个独立基准双实现测试。<code>adaptiveMACDParams</code> 已改为固定默认 (12,26,9) 并支持对象 / 字符串 / HTML 属性 / URL 参数配置。<em>（后续变更：该兼容函数已于 2026-11-19 P2 移除，改用 <code>resolveMACDParams()</code> / <code>parseMACDParams()</code>；本行记录的是核验当时的状态。）</em></li>
       <li><strong>2026-11-19 P1 亦已全部完成</strong>：筹码三角分布峰值改当日成交均价（VWAP）且分布形状/衰减系数/分桶精度可配置；「平均成本」对齐 COST(50)、加权平均另列、集中度标注面板口径（非 SCR）；涨跌停按板块识别比例并改 0.011 元容差；集合竞价虚拟价改按上交所 3.5.2 三原则真实撮合。<code>verify.mjs</code> 换成独立比例/容差与预置期望值断言，新增 <code>scripts/tests/p1-algorithm.test.mjs</code> 与 <code>scripts/limit-rules.mjs</code> / <code>auction-match.mjs</code>。报告主体的偏差表记录的是<strong>核验当时</strong>的发现，请以本状态卡为准。</li>
     </ul>
   </div>

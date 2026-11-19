@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sma, ema, macd, kdj, rgba, rect, DEFAULT_MACD_PARAMS,
-  resolveMACDParams, parseMACDParams, adaptiveMACDParams } from '../../src/pure.js';
+  resolveMACDParams, parseMACDParams } from '../../src/pure.js';
 import { LAYOUT, PALETTE, withPalette } from '../../src/types.js';
 
 const series = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -53,8 +53,10 @@ test('LAYOUT 单一真源：4 条标题/表头行同高', () => {
 
 test('MACD 参数：固定默认 (12,26,9)，不再随根数自适应', () => {
   assert.deepEqual({ ...DEFAULT_MACD_PARAMS }, { fast: 12, slow: 26, signal: 9 });
+  // 参数与根数无关：不同 count 下 resolveMACDParams() 恒返回固定默认
   for (const count of [3, 5, 8, 20, 39, 40, 935]) {
-    assert.deepEqual(adaptiveMACDParams(count), { fast: 12, slow: 26, signal: 9 }, `count=${count}`);
+    assert.deepEqual(resolveMACDParams({ ...DEFAULT_MACD_PARAMS }), { fast: 12, slow: 26, signal: 9 },
+      `count=${count}`);
   }
 });
 

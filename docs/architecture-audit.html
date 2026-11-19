@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>股票图表组件 · 全量架构与数据契约审计（2026-11-19）</title>
+<style>
+  :root{--bg:#f7f8fa;--card:#fff;--ink:#1f2329;--muted:#6b7280;--line:#e3e6eb;--up:#e24b4a;--down:#1d9e75;--warn:#b0741a;--blue:#1b5fbf}
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 20px 60px;background:var(--bg);color:var(--ink);font:14px/1.7 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1180px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:22px}
+  h2{font-size:19px;margin:34px 0 14px;padding-left:10px;border-left:4px solid var(--blue)}
+  h3{font-size:15px;margin:22px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:16px}
+  .tldr{border-left:5px solid var(--down);background:#f0faf5}
+  .tldr b{color:var(--down)}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .kpi b{display:block;font-size:23px;line-height:1.2;font-variant-numeric:tabular-nums}
+  .kpi span{color:var(--muted);font-size:12px}
+  table{width:100%;border-collapse:collapse;background:var(--card);font-size:12.5px}
+  th,td{border:1px solid var(--line);padding:8px 9px;text-align:left;vertical-align:top}
+  th{background:#f2f4f7;font-weight:600;white-space:nowrap}
+  .tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap}
+  .t-ok{background:#e6f5ee;color:#0e7a55}
+  .t-warn{background:#fff4e5;color:var(--warn)}
+  .t-bad{background:#fdecec;color:var(--up)}
+  .t-blue{background:#eaf1fd;color:var(--blue)}
+  code{background:#f2f4f7;padding:1px 5px;border-radius:3px;font-size:11.5px}
+  ul{margin:8px 0;padding-left:22px}li{margin:4px 0}
+  .src{color:var(--muted);font-size:12px;margin-top:8px}
+  .note{background:#fff8e8;border:1px solid #f0d9a8;border-radius:8px;padding:12px 16px;margin:12px 0}
+  .foot{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:16px;margin-top:34px}
+  .red{color:var(--up);font-weight:600}.green{color:var(--down);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>股票图表组件 · 全量架构与数据契约审计</h1>
+  <div class="sub">审计日期 2026-11-19 ｜ 范围：模块出入参 / 类型契约 / 数据可获得性与授权边界 / 模块化规范 ｜ 标的：600519.SH 示例数据（截至 2026-11-13）</div>
+
+  <div class="card tldr">
+    <p><b>结论：架构分层健康（零循环依赖、compute 纯函数、core 不反向依赖 DOM），但契约层与数据边界原先不够规范；本轮已落地四组规范化修复，剩余大项需你确认后再重构。</b></p>
+    <ul>
+      <li><strong>出入参契约</strong>：修正 14 处 <code>.d.ts</code> 与实现不符、删除 3 个幽灵属性、补齐 <code>period</code> / <code>chip-mode</code> 属性与 React 的 <code>macd</code> / <code>intradayDays</code> 映射；补参数防御与只读返回值。</li>
+      <li><strong>数据可获得性</strong>：核实交易所法定公开范围与 Level-2 授权边界，为 10 个数据集建立 <code>manifest.provenance</code> 摘要，数据体补 <code>source</code> / <code>license</code> / <code>requiresAuthorization</code>，UI 增加示意与拟真提示。</li>
+      <li><strong>模块化</strong>：新增 <code>src/core/market-constants.js</code> 作为 A 股业务常量单一真源，消除时段 / 0.01 / ×100 / 240 分钟的多份拷贝；涨跌停 0.9/1.1 硬编码改为按 <code>manifest.limitRate</code> 计算。</li>
+      <li><strong>工程一致性</strong>：<code>npm run data</code> 补齐两步生成链、<code>typecheck</code> 纳入 <code>react.d.ts</code>、<code>data-store</code> 缺失分片按注释真正跳过。</li>
+    </ul>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><b class="green">63/63</b><span>npm test 全部通过（7 个运行时契约 + 7 个 P0 + 11 个 P1/P2 架构回归）</span></div>
+    <div class="kpi"><b class="green">0</b><span>循环依赖 / JS 控制台错误（6 张截图）</span></div>
+    <div class="kpi"><b>10</b><span>数据集全部登记 provenance</span></div>
+    <div class="kpi"><b class="green">0</b><span>审计问题剩余待办（8 组全部完成，见第 6 节）</span></div>
+  </div>
+  <div class="src">数据来源：项目源码逐文件盘点（36 个 JS/MJS）、<code>src/data/*.json</code> 只读解析、<code>scripts/verify.mjs</code> 与 6 组测试；外部口径按金融检索路由核实，检索时点 2026-11-19。</div>
+
+  <h2>一、外部口径：五类数据的可获得性与授权边界</h2>
+  <table>
+    <thead><tr><th>数据类别</th><th>是否交易所法定即时行情</th><th>公开可获得性</th><th>授权要求</th><th>项目现状</th></tr></thead>
+    <tbody>
+      <tr><td>日频行情（日 K）</td><td>日报表属法定公开</td><td>高，日终信息免费</td><td>再分发需许可</td><td><span class="tag t-ok">真实</span> 东财前复权 935 根 + 4 根注入形态</td></tr>
+      <tr><td>分时历史（分钟线）</td><td>部分（快照累加，属信息商加工）</td><td>中，保留长度有限</td><td>延时转发需 Category_7 许可</td><td><span class="tag t-warn">部分</span> 当日真实；多日前 4 日按日 K 拟真</td></tr>
+      <tr><td>集合竞价</td><td><strong>是</strong>（参考价/匹配量/未匹配量）</td><td>结果公开；<strong>9:15–9:24 虚拟量几乎不留存历史</strong></td><td>逐笔挂撤单属 L2</td><td><span class="tag t-warn">示意</span> 三原则撮合 + 末点锚定真实</td></tr>
+      <tr><td>十档 / 逐笔 / 委托流</td><td><strong>否</strong>（Level-2 增值行情）</td><td>低，须持牌</td><td>展示/非展示许可，禁止自行再分发</td><td><span class="tag t-bad">mock</span> 已标注需授权、非真实行情</td></tr>
+      <tr><td>筹码分布</td><td><strong>否</strong>（非交易所数据）</td><td>软件估算模型</td><td>无交易所授权，属信息商自有算法</td><td><span class="tag t-blue">估算</span> 已暴露 shape / peakSource / decay / 口径</td></tr>
+    </tbody>
+  </table>
+  <p class="src">依据：《证券交易所管理办法》（证监会令第 192 号）第 38/39 条、上交所《交易规则》5.1.2 / 5.1.3 / 5.2.1（2023、2026 修订）、深交所《交易规则》5.2.1、上证所与深证信息的 Level-2 展示/非展示价目表、CIIS Category_7L1/L2 费率表、2026 年《增强行情非展示技术管理规范》。以上为一手规则与厂商资费公示；厂商算法细节（衰减系数、日内分布）为二手资料，厂商未完全公开。</p>
+  <div class="note"><strong>口径分歧需在 UI/文档保留说明</strong>：筹码三角分布峰值，一份厂商口径资料写「峰在当日成交均价」，另一份资料写「常见峰在 (H+L+C)/3」；同时多方明确「衰减系数、撒播形状、起始日各软件不同，同股同日集中度对不上属正常」。项目当前用 VWAP 峰并已暴露 <code>peakSource</code> / <code>shape</code> / <code>decay</code>，属合理的一种实现，但不应表述为行业唯一标准。</div>
+
+  <h2>二、模块出入参契约：发现与修复</h2>
+  <table>
+    <thead><tr><th>类别</th><th>代表问题（修复前）</th><th>本轮处理</th><th>状态</th></tr></thead>
+    <tbody>
+      <tr><td>类型不符</td><td><code>SubplotConfig.height: number</code> 实际为字符串；<code>crosshair-change.index</code> 可为 null；<code>view-panorama</code> detail 实际为 null；<code>setSubplotIndicator</code> 声明 <code>unknown</code> 实际返回数组；<code>setDataset</code> 要求完整对象但支持部分注入</td><td>逐项修正 <code>index.d.ts</code>（14 处），含 <code>setPointer(x:null)</code> 清空语义、<code>setTheme</code> 第二参、<code>getContext(): unknown|null</code></td><td><span class="tag t-ok">已修</span></td></tr>
+      <tr><td>幽灵 / 缺失属性</td><td><code>symbol</code> 被观察但无行为、JSX 有 <code>height</code>；<code>period</code> / <code>chipMode</code> 有方法无属性；React 未映射 <code>macd</code> / <code>intraday-days</code></td><td>移除无行为属性，补 <code>period</code> / <code>chip-mode</code> 属性与初始化，React 补 2 个 setter 及 <code>react.d.ts</code> 字段</td><td><span class="tag t-ok">已修</span></td></tr>
+      <tr><td>返回值泄漏内部状态</td><td><code>setMA</code> 返回内部数组、事件 detail 传引用；<code>rgba</code> 返回共享可变缓存数组</td><td><code>setMA</code> 与事件都给拷贝；<code>rgba</code> 冻结缓存值并对非法色值兜底（不污染缓存）</td><td><span class="tag t-ok">已修</span></td></tr>
+      <tr><td>参数未校验</td><td><code>sma/kdj/volumeRatio</code> 的 n≤0 / NaN 产生全 NaN；<code>setViewport</code> 可写入越界或 start&gt;end</td><td>纯函数补前置防御；<code>setViewport</code> 钳制到序列范围并补 <code>mode</code></td><td><span class="tag t-ok">已修</span></td></tr>
+      <tr><td>事件 options / detail</td><td><code>tape-scroll</code> 不冒泡（与声明注释矛盾）；<code>view-panorama</code> 未传 detail；同一事件多源/多 options</td><td>前两项已修；<code>chart-error</code> / <code>depth-unit-change</code> 多源与 options 统一列为待办</td><td><span class="tag t-warn">部分</span></td></tr>
+      <tr><td>数据缺失防御</td><td><code>data-store.js</code> 注释称「缺失分片自动跳过」，实际任一 404 会让整个加载失败</td><td>补 try/catch + <code>console.warn</code> 真正跳过；manifest 缺失仍为致命错误</td><td><span class="tag t-ok">已修</span></td></tr>
+      <tr><td>校验方式</td><td>原有 <code>contract.test.mjs</code> / <code>verify.mjs</code> 多为源码字符串断言，不校验运行时行为</td><td>新增 <code>contract-runtime.test.mjs</code>（7 个测试）：常量真源、色值只读、参数防御、provenance、数据体标注、SOURCES 覆盖</td><td><span class="tag t-ok">已补</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>三、数据可获得性矩阵（10 个数据集）</h2>
+  <table>
+    <thead><tr><th>数据集</th><th>真实性</th><th>可获得性</th><th>L2 授权</th><th>本轮新增标注</th></tr></thead>
+    <tbody>
+      <tr><td>bars</td><td>真实日 K + 4 根注入</td><td>public-eod</td><td>否</td><td>注入样本 <code>source: 'injected-demo'</code></td></tr>
+      <tr><td>intraday</td><td>真实分时 267 点</td><td>vendor-minute</td><td>否</td><td>每点 <code>source: 'real-intraday'</code></td></tr>
+      <tr><td>intradayMulti</td><td>末日真实 + 前 4 日拟真</td><td>partly-unavailable</td><td>否</td><td>前 4 日 <code>source: 'simulated-from-daily-ohlc'</code>；UI「前 N 日为拟真数据」</td></tr>
+      <tr><td>chips</td><td>软件估算模型</td><td>estimated-model</td><td>否</td><td><code>source/estimated</code> + 契约补齐 shape/peakSource/decay/concentrationBasis</td></tr>
+      <tr><td>auction</td><td>示意撮合 + 末点锚定真实</td><td>l1-intraday-only</td><td>否</td><td>68 个示意点 <code>source: 'illustrative'</code> + <code>priceBasis</code>；浮层「示意撮合 · 虚拟量历史不留存」</td></tr>
+      <tr><td>trades</td><td>mock</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>source/license/requiresAuthorization</code></td></tr>
+      <tr><td>depth</td><td>mock</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>license/requiresAuthorization</code></td></tr>
+      <tr><td>orders</td><td>mock 委托流</td><td>level2-licensed</td><td><strong>是</strong></td><td>经 <code>manifest.provenance</code> 与 SOURCES.md 标注</td></tr>
+      <tr><td>depthFull</td><td>由 mock 委托流回放</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>source/license/requiresAuthorization</code></td></tr>
+      <tr><td>depthScenarios</td><td>mock 场景</td><td>level2-licensed</td><td><strong>是</strong></td><td>内层 pano 继承标注，顶层经 provenance 登记</td></tr>
+    </tbody>
+  </table>
+  <p class="src"><code>manifest.provenance</code> 覆盖 <code>manifest.files</code> 全部 10 个键，含 <code>availability / source / licensed</code>；<code>SOURCES.md</code> 追加「派生数据集与 Level-2 授权边界」节，补齐 orders/depthFull/depthScenarios 三节及第二个固定种子 <code>mulberry32(2026111302)</code>。</p>
+
+  <h2>四、模块化规范</h2>
+  <div class="card">
+    <ul>
+      <li><strong>依赖方向</strong>：<code>types.js</code>（叶子）← <code>gl</code> / <code>compute</code> / <code>core</code> ← <code>elements</code> ← <code>index.js</code>，零循环依赖；<code>core</code> 不 <code>querySelector</code> DOM，<code>compute/indicators.js</code> 保持纯函数（本轮仅依赖零依赖的常量叶子）。</li>
+      <li><strong>单一真源</strong>：新增 <code>src/core/market-constants.js</code>，导出 <code>PRICE_TICK / PRICE_EPS / LOT_SIZE / AM_START…PM_END / SESSION_MINUTES / DAY_MINUTES / HALF_HOUR_MARKS / AUCTION_*</code>；<code>indicators.js</code>、<code>bar-aggregator.js</code>、<code>limit-rules.mjs</code>、<code>chart-context.js</code> 改为引用，并经 <code>./pure</code> 导出。</li>
+      <li><strong>涨跌停比例</strong>：委托流与校验不再硬编码 <code>0.9/1.1</code>，改 <code>limitPrices(preClose, manifest.limitRate)</code>，换创业板/科创板数据时边界与校验同步跟随。</li>
+      <li><strong>工程链</strong>：<code>npm run data</code> 改为「生成主数据 + 生成委托簿」两步（此前单跑会丢 manifest 的 3 个派生键导致 check 失败）；<code>typecheck</code> 纳入 <code>frameworks/react.d.ts</code>。</li>
+      <li><strong>重复实现收敛</strong>：<code>r2</code> 4 份、<code>split(':')</code> 6 份、<code>PRICE_EPS</code> 2 份中的后两项已收口；剩余 <code>r2</code> / <code>mulberry32</code> / 竞价时段常量仍分散，列入待办。</li>
+    </ul>
+  </div>
+
+  <h2>五、验证结果</h2>
+  <table>
+    <thead><tr><th>项目</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td><code>npm run check</code></td><td>36 个源码文件语法检查 + 数据契约 + 预置期望值断言，全部通过</td></tr>
+      <tr><td><code>npm test</code></td><td><strong>63/63</strong>（7 个运行时契约 + 7 个 P0 受控状态 + 11 个 P1/P2 架构回归）</td></tr>
+      <tr><td>P1/P2 浏览器探针</td><td>点击盘口单位按钮：<code>depth-unit-change</code> 只派发 <strong>1 次</strong>、<code>request</code> 1 次、页面下拉 volume → amount 同步、<code>chart-error</code> 0；门面仍冻结、序列 242 点，0 JS 错误</td></tr>
+      <tr><td>P1/P2 截图回归</td><td>8 场景 0 JS 错误；前 5 张文件大小与改动前一致（像素级无视觉回归），含盘口单位 amount、涨停场景、全景放大视图</td></tr>
+      <tr><td>P0 浏览器探针</td><td>门面 <code>Object.isFrozen=true</code>、写入抛 <code>TypeError</code>、内部方法 0 暴露、getter 浅拷贝不被反向污染；<code>setViewport/setTheme/setDepthScenario/setIntradayDays</code> 实测生效（242 → 726 → 242），0 JS 错误</td></tr>
+      <tr><td>P0 截图回归</td><td>6 场景文件大小与改动前一致（像素级无视觉回归），价格轴 / 竞价列 / 副图 / 盘口 / 明细全部正常</td></tr>
+      <tr><td><code>npm run typecheck</code> / <code>build</code></td><td>通过；build 25 个文件，pack 29 文件 / 100.0 kB</td></tr>
+      <tr><td>截图回归（6 场景）</td><td>0 JS 错误；竞价浮层示意说明、多日「前 2 日为拟真数据」、竞价禁用态、日界标签均正常</td></tr>
+      <tr><td>数据重生成</td><td><code>npm run data</code> 两步链产出 10 个数据集，<code>provenance</code> 完整、SOURCES.md 覆盖派生集</td></tr>
+    </tbody>
+  </table>
+
+  <h2>六、审计问题处置台账（全部完成）</h2>
+  <table>
+    <thead><tr><th>优先级</th><th>事项</th><th>原因 / 风险</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag t-ok">P0 已完成</span></td><td><code>getContext()</code> 原返回可变 ChartContext（50+ 公开方法无类型声明）</td><td>改为 <strong>只读门面</strong>：<code>ChartContext.readonlyFacade()</code> 返回 <code>Object.freeze</code> + Proxy set/delete 陷阱的对象，状态 getter 全是浅拷贝、查询方法返回数组拷贝、不暴露 <code>setMode/setDataset/requestRender/applyLayout</code> 等内部方法；<code>index.d.ts</code> 新增精确的 <code>ChartContextFacade</code> 接口，不再用 <code>unknown</code>。生产代码中本无调用方，兼容包袱已消除，仍标 deprecated 待下个主版本移除</td></tr>
+      <tr><td><span class="tag t-ok">P0 已完成</span></td><td>组件层 9 处绕过 setter 直接写 ctx（初始化 3 处、<code>palette</code> / <code>viewport</code> / <code>depthFull</code> 各 1–2 处、<code>priceScale</code> 2 处）</td><td>在 ChartContext 新增受控 setter：<code>configure()</code>（初始化，不 emit）、<code>setPalette()</code>、<code>setPriceScale()</code>（校验 min/max）、<code>setDepthFull()</code>、<code>setViewport()</code>（钳制 + emit + 重绘，逻辑从组件层搬入 core）；组件层全部改为转调，静态核查<strong>组件层直接写 ctx = 0 处</strong>。顺带修正初始 mode 在 <code>layout()</code> 之后才设置的时序问题</td></tr>
+      <tr><td><span class="tag t-ok">P1 已完成</span></td><td>数据重跑不可完全复现：生成脚本读 <code>hist_intraday.json</code>，抓取脚本只产出 <code>tx_minute.json</code></td><td>统一规范名：<code>npm run fetch</code> 一次抓取同时写 <code>hist_intraday.json</code> + 别名 <code>tx_minute.json</code>；生成脚本建立「规范名 → 兼容名 → <code>src/data/raw</code> 归档副本」三级回退并校验分钟点非空，离线也能完整重跑；<code>SOURCES.md</code> 记录回退链；<code>npm run data</code> 已含两步生成链</td></tr>
+      <tr><td><span class="tag t-ok">P1 已完成</span></td><td>事件契约漂移：<code>chart-error</code> 两处 options 不同、<code>depth-unit-change</code> 双派发源、<code>webglcontext-*</code> options 不对称；事件名未集中登记</td><td>新建 <code>src/events.js</code>：<code>CHART_EVENTS</code> 冻结常量表 + <code>emitEvent()</code>（统一 bubbles/composed）。全仓 <code>new CustomEvent</code> 收敛到该文件一处；盘口单位改为 <code>depth-unit-request</code> → 根容器唯一派发 <code>depth-unit-change</code>，浏览器探针实测点击一次只派发一次；<code>chart-error</code> / <code>webglcontext-*</code> options 统一；<code>index.d.ts</code> 补 request 事件</td></tr>
+      <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>exports</code> 未暴露 <code>dist/core/*</code> / <code>dist/gl/*</code>；<code>./elements/*</code> 有 <code>.js.js</code> 陷阱；无 <code>./vue</code></td><td>补齐 <code>./vue</code> / <code>./events</code> / <code>./core/*</code> / <code>./gl/*</code> / <code>./compute/*</code> / <code>./frameworks/*</code>；通配符目标改为 <code>./dist/elements/*</code> 消除拼接陷阱；新增无运行时依赖的 <code>vStockChart</code> 指令与类型；<code>typecheck</code> 纳入全部 <code>.d.ts</code>；<code>pretest</code> 保证 build 顺序</td></tr>
+      <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>r2</code> 4 份、<code>mulberry32</code> 2 份、竞价时段常量 6 份；<code>manifest.session</code> 无代码读取；UI 硬编码「前复权」</td><td>新建 <code>scripts/shared.mjs</code>（<code>r2/r6/mulberry32</code>）供 4 个脚本共用；<code>market-constants.js</code> 补 <code>AUCTION_STEP_SEC</code> / <code>TIME</code> / <code>SESSION</code>，委托流时段字面量与 manifest.session 均改为引用；<code>getSeries()</code> 收盘时刻读 <code>manifest.session</code>（缺省回退 15:00）；主图复权标签读 <code>manifest.adjust</code>。数值序列与旧实现等价，委托流 1377 条 / 全景 53-33 档不变</td></tr>
+      <tr><td><span class="tag t-ok">P2 已完成</span></td><td>文档数字漂移；<code>generatedAt</code> 与 <code>floatShares</code> 硬编码</td><td>README 数字修正为 507 / 1377 / 53-33 并消除 0.5% 容差矛盾；<code>generatedAt</code> 改当前 UTC 时间并支持 <code>SOURCE_DATE_EPOCH</code> 可复现构建；<code>floatShares</code> 改读 <code>src/data/raw/instrument.json</code>（含来源与 asOf），manifest 增加 <code>floatSharesSource</code></td></tr>
+      <tr><td><span class="tag t-ok">P2 已完成</span></td><td>废弃 <code>adaptiveMACDParams</code> / <code>CLEAR</code>；<code>setMA</code> 与 <code>setMovingAverages</code> 两套命名；<code>PALETTE</code> 全局可变单例</td><td>删除两个废弃导出（测试改用 <code>resolveMACDParams</code>）；均线写入统一为 <code>ChartContext.setMovingAverages()</code>，组件层无 <code>setMA</code> 残留；新增纯函数 <code>createPalette()</code> 并给 <code>applyPalette/resetPalette</code> 标 <code>@deprecated</code>（保留 <code>withPalette</code> 的帧级机制，不改渲染行为）</td></tr>
+    </tbody>
+  </table>
+  <p class="src"><strong>处置结论（2026-11-19）：审计发现的 8 组问题全部完成</strong>（P0 两项先做，随后 P1 四组 + P2 两组一次性完成）。累计 <strong>63/63</strong> 测试通过、8 场景截图 0 JS 错误、浏览器事件探针确认单位切换单一派发且下拉同步正常。剩余待观察项仅为「下个主版本移除 <code>getContext()</code>」这类兼容性清理，已标 deprecated，不列入本轮待办。</p>
+
+  <div class="foot">
+    <p>本报告为工程架构与数据契约审计，示例标的与示例数据仅用于验证数据结构与组件渲染，不构成投资建议。涉及交易所规则与行情授权的部分以监管机构、交易所与持牌信息商最新公示为准。</p>
+    <p><strong>免责声明</strong>：以上内容基于公开数据和量化分析，仅供参考，不构成投资建议。市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，必要时咨询持牌专业机构。过往表现不预示未来收益。</p>
+  </div>
+</div>
+</body>
+</html>

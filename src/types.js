@@ -19,6 +19,7 @@
  * @property {number} [change] 元
  * @property {''|'limitUp'|'limitDown'|'limitUpBroken'|'limitDownBroken'} [limitState]
  *   涨停 / 跌停 / 涨停炸板（盘中触板未封住）/ 跌停炸板（盘中触板未封死）；空串为普通 K 线
+ * @property {'injected-demo'} [source] 仅 4 根拟真注入的涨跌停形态带此标记，与真实 K 线可区分
  */
 
 /**
@@ -26,6 +27,8 @@
  * @typedef {Object} IntradayPoint
  * @property {number} timestamp UTC 毫秒
  * @property {string} time HH:mm，市场本地
+ * @property {string} [tradeDate] 所属交易日 YYYY-MM-DD；多日分时按此分日，单日可省略
+ * @property {'real-intraday'|'simulated-from-daily-ohlc'} [source] 来源标注；历史分钟分时无免费公开源时按日 K OHLC 拟真
  * @property {number} price 该分钟最后成交价
  * @property {number} avgPrice 累计均价
  * @property {number} volume 该分钟增量，股
@@ -38,7 +41,7 @@
 /** @typedef {'B'|'S'|'N'} Side 归一方向：主动买 / 主动卖 / 未知或中性 */
 
 /**
- * 逐笔成交 / 合并分笔。
+ * 逐笔明细 / 合并分笔。
  * @typedef {Object} TradeTick
  * @property {number} timestamp
  * @property {string} time HH:mm:ss
@@ -70,6 +73,9 @@
  * @property {0|1|2} unmatchedSide 0 无 / 1 买方 / 2 卖方
  * @property {number} volume 股
  * @property {number} amount 元
+ * @property {'illustrative'|'anchored-real'} [source] 9:15–9:24 虚拟撮合量绝大多数平台不留存历史，
+ *   属示意数据；仅 9:25 / 15:00 末点锚定真实成交
+ * @property {string} [priceBasis] 撮合口径，如 SSE-3.5.2-max-volume
  */
 
 /**
@@ -89,10 +95,17 @@
 
 /**
  * 筹码峰完整数据集：统计与 150 档直方图共用一份 priceGrid，切换模式不重新请求。
+ * 交易所不发布持仓成本，本数据集是软件按历史成交/换手率反推的**估算模型**，非真实持仓账本。
  * @typedef {Object} ChipDataset
  * @property {string} symbol
  * @property {'none'|'qfq'|'hfq'} adjust
  * @property {string} algorithm
+ * @property {string} [source] estimated-model
+ * @property {boolean} [estimated] 恒为 true
+ * @property {'triangular'|'uniform'} [shape] 日内分布形状
+ * @property {'vwap'|'four-price-average'} [peakSource] 三角分布峰值来源
+ * @property {number} [decay] 历史换手衰减系数
+ * @property {string} [concentrationBasis] 集中度口径（面板口径 / SCR 再除 2）
  * @property {number} bins
  * @property {number} lookback
  * @property {number[]} priceGrid 150 档价格
@@ -123,8 +136,14 @@
  * @property {'none'|'qfq'|'hfq'} adjust
  * @property {string} interval
  * @property {string} tradeDate
+ * @property {string[]} [tradeDates] 多日分时交易日列表
+ * @property {Record<string,number>} [preCloseByDate] 各交易日昨收
+ * @property {number} [limitRate] 按代码/名称识别的涨跌幅比例
  * @property {number} preClose
  * @property {number} floatShares
+ * @property {string} [source] 数据集整体来源说明
+ * @property {Record<string,{availability:string,source:string,licensed:boolean}>} [provenance]
+ *   逐数据集可获得性与 Level-2 授权边界摘要
  * @property {{open:string,close:string}[]} session
  * @property {Record<string,string>} files
  * @property {Record<string,string>} units
@@ -211,7 +230,19 @@ export function resolveTheme(theme) {
   return DEFAULT_PALETTE;
 }
 
-/** 合并主题补丁到当前色板（只接受已知键），返回只读快照 */
+/**
+ * 纯函数：由主题补丁生成一份**新**色板，不改动全局 PALETTE。
+ * 新代码应优先用它 + 实例色板；applyPalette / resetPalette 仅为帧级 withPalette 服务。
+ */
+export function createPalette(patch = {}, base = DEFAULT_PALETTE) {
+  const out = { ...base };
+  for (const k of Object.keys(patch || {})) {
+    if (k in DEFAULT_PALETTE && typeof patch[k] === 'string') out[k] = patch[k];
+  }
+  return out;
+}
+
+/** @deprecated 会就地改动全局 PALETTE；新代码请用 createPalette() 或 <stock-chart> 的实例色板 */
 export function applyPalette(patch = {}) {
   for (const k of Object.keys(patch)) {
     if (k in DEFAULT_PALETTE && typeof patch[k] === 'string') PALETTE[k] = patch[k];
@@ -219,6 +250,7 @@ export function applyPalette(patch = {}) {
   return { ...PALETTE };
 }
 
+/** @deprecated 见 applyPalette；仅用于恢复全局色板 */
 export function resetPalette() { return applyPalette(DEFAULT_PALETTE); }
 
 /**

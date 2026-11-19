@@ -1,8 +1,10 @@
 // 指标计算（当前 TS/JS 实现）。串行递推类指标保持串行，符合 docs/03 §6.4 的并行性约束。
 // 后续接入 Rust/WASM 时，只需让 WasmComputeEngine 实现同名方法，组件层不改。
+import { AM_START, AM_END, PM_START, SESSION_MINUTES, DAY_MINUTES } from '../core/market-constants.js';
 
 export function sma(values, n) {
   const out = new Array(values.length).fill(null);
+  if (!Number.isInteger(n) || n < 1) return out;   // 防御 n<=0 / 小数 / NaN 产生全 NaN 结果
   let sum = 0;
   for (let i = 0; i < values.length; i += 1) {
     sum += values[i];
@@ -67,9 +69,10 @@ export function macd(bars, { fast = 12, slow = 26, signal = 9 } = {}) {
 
 export function kdj(bars, n = 9) {
   const out = [];
+  const p = Number.isFinite(n) && n >= 1 ? Math.round(n) : 9;   // 防御 n<=0 / NaN
   let k = 50, d = 50;
   for (let i = 0; i < bars.length; i += 1) {
-    const from = Math.max(0, i - n + 1);
+    const from = Math.max(0, i - p + 1);
     let hi = -Infinity, lo = Infinity;
     for (let j = from; j <= i; j += 1) { hi = Math.max(hi, bars[j].high); lo = Math.min(lo, bars[j].low); }
     const rsv = hi === lo ? 50 : ((bars[i].close - lo) / (hi - lo)) * 100;
@@ -83,21 +86,18 @@ export function kdj(bars, n = 9) {
 /** 量比（日线口径）：当日成交量 ÷ 前 N 日平均日成交量。分时量比请用 intradayVolumeRatio。 */
 export function volumeRatio(bars, n = 5) {
   const out = [];
+  const p = Number.isFinite(n) && n >= 1 ? Math.round(n) : 5;   // 防御 n<=0 / NaN
   let sum = 0;
   for (let i = 0; i < bars.length; i += 1) {
-    if (i >= n) {
-      const avg = sum / n;
+    if (i >= p) {
+      const avg = sum / p;
       out.push({ time: bars[i].timestamp, value: avg > 0 ? bars[i].volume / avg : 1 });
     } else out.push({ time: bars[i].timestamp, value: 1 });
     sum += bars[i].volume;
-    if (i >= n) sum -= bars[i - n].volume;
+    if (i >= p) sum -= bars[i - p].volume;
   }
   return out;
 }
-
-/** A 股交易时段：上午 9:30–11:30、下午 13:00–15:00，全天 240 分钟 */
-const AM_START = 9 * 60 + 30, AM_END = 11 * 60 + 30;
-const PM_START = 13 * 60, SESSION_MINUTES = 120, DAY_MINUTES = 240;
 
 /** 截至某个分时时刻的累计开市分钟数（扣除 11:30–13:00 午休，最小 1 分钟） */
 export function elapsedMarketMinutes(time) {
@@ -131,12 +131,16 @@ export function intradayVolumeRatio(points, avg5DailyVolume, atTime) {
 /** 逐分时点生成量比曲线（供副图 VOL_RATIO 在分时模式下使用） */
 export function intradayVolumeRatioSeries(points, avg5DailyVolume) {
   const pts = (points || []).filter((p) => p.time <= '15:00');
-  let cum = 0;
+  let cum = 0, currentDate = null;
   return pts.map((p) => {
+    // 多日分时：跨交易日时累计量归零，每个交易日各自从 09:30 起算
+    if (currentDate && p.tradeDate && p.tradeDate !== currentDate) cum = 0;
+    if (p.tradeDate) currentDate = p.tradeDate;
     cum += p.volume || 0;
     const perMinute = avg5DailyVolume > 0 ? avg5DailyVolume / DAY_MINUTES : 0;
     return {
       time: p.time,
+      tradeDate: p.tradeDate || null,
       value: perMinute > 0 ? (cum / elapsedMarketMinutes(p.time)) / perMinute : 1,
     };
   });

@@ -1,5 +1,6 @@
 // K 线多周期聚合：当日分时 → 1 / 5 / 15 / 30 / 60 / 120 分钟；日 K → 周 / 月 / 季 / 年。
 // 输出与 bars_1d.json 相同的字段结构，额外带 label 供时间轴与 hover 明细显示。
+import { AM_START, AM_END, PM_START, SESSION_MINUTES } from './market-constants.js';
 /** 默认周期：日 K（周期列表按分钟→日→周月年排序，故不能用 PERIODS[0] 兜底） */
 export const DEFAULT_PERIOD = '1d';
 
@@ -88,8 +89,6 @@ export function aggregateDaily(bars, period) {
  * 每 size 分钟一根；11:30 / 15:00 的收盘点归入所在时段最后一根，绝不跨午休成根。
  * open/close 取首末价、high/low 取区间极值、量额求和；preClose 取上一根收盘。
  */
-const AM_START = 9 * 60 + 30, AM_END = 11 * 60 + 30;
-const PM_START = 13 * 60, SESSION_MINUTES = 120;
 const clockMinutes = (t) => {
   const [h, m] = String(t).split(':').map(Number);
   return (h || 0) * 60 + (m || 0);

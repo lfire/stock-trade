@@ -1,4 +1,4 @@
-import type { ChartDataset, ChartMode, ChipMode, MAConfig } from '../index.js';
+import type { ChartDataset, ChartMode, ChipMode, MAConfig, MACDParams } from '../index.js';
 
 export interface StockChartBinding {
   /** 数据集目录 URL（组件自行 fetch） */
@@ -14,6 +14,10 @@ export interface StockChartBinding {
   chips?: boolean | 'on' | 'off';
   subplots?: number;
   movingAverages?: MAConfig[];
+  /** MACD 参数：对象或 '12,26,9' 字符串 */
+  macd?: Partial<MACDParams> | string;
+  /** 分时天数 1–5 */
+  intradayDays?: number | string;
   viewport?: { start: number; end: number };
   crosshair?: number | null;
   /** 事件名 → 处理函数；返回的 cleanup 会逐一解绑 */

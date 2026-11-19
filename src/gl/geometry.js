@@ -3,16 +3,18 @@
 import { PALETTE } from '../types.js';
 
 const colorCache = new Map();
+/** 返回只读元组：冻结缓存值，避免外部改到共享数组造成全局串色（对齐 pure.d.ts 的 readonly Color） */
 export function rgba(hex, alpha = 1) {
   const key = `${hex}:${alpha}`;
   if (colorCache.has(key)) return colorCache.get(key);
-  const h = hex.replace('#', '');
-  const c = [
+  const h = String(hex || '').replace('#', '');
+  if (!/^[0-9A-Fa-f]{6}$/.test(h)) return Object.freeze([0, 0, 0, alpha]);   // 非法色值兜底，不写入缓存
+  const c = Object.freeze([
     parseInt(h.slice(0, 2), 16) / 255,
     parseInt(h.slice(2, 4), 16) / 255,
     parseInt(h.slice(4, 6), 16) / 255,
     alpha,
-  ];
+  ]);
   colorCache.set(key, c);
   return c;
 }

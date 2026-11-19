@@ -1,6 +1,7 @@
 // 十档盘口：DOM 表格，支持 5/10 档切换与「普通 / 涨停 / 跌停」三种盘口场景。
 // 涨跌停时一侧无挂单，用提示条代替多行空档，并把封单档高亮。
 import { PALETTE, LAYOUT } from '../types.js';
+import { emitEvent, CHART_EVENTS } from '../events.js';
 
 export class DepthBook extends HTMLElement {
   constructor() {
@@ -161,18 +162,15 @@ export class DepthBook extends HTMLElement {
       ${rows.join('')}`;
     this.shadowRoot.querySelector('.lvl').addEventListener('click', () => {
       this.setLevels(this.levels === 10 ? 5 : 10);
-      this.dispatchEvent(new CustomEvent('depth-levels-change', {
-        detail: { levels: this.levels }, bubbles: true, composed: true,
-      }));
+      emitEvent(this, CHART_EVENTS.DEPTH_LEVELS_CHANGE, { levels: this.levels });
     });
     this.shadowRoot.querySelector('.unit').addEventListener('click', () => {
-      this.setUnit(this.unit === 'volume' ? 'amount' : 'volume');
-      this.dispatchEvent(new CustomEvent('depth-unit-change', {
-        detail: { unit: this.unit }, bubbles: true, composed: true,
-      }));
+      const next = this.unit === 'volume' ? 'amount' : 'volume';
+      // 只发 request；由 <stock-chart> 统一派发 depth-unit-change，避免双派发
+      emitEvent(this, CHART_EVENTS.DEPTH_UNIT_REQUEST, { unit: next });
     });
     this.shadowRoot.querySelector('.all-orders').addEventListener('click', () => {
-      this.dispatchEvent(new CustomEvent('view-panorama', { bubbles: true, composed: true }));
+      emitEvent(this, CHART_EVENTS.VIEW_PANORAMA, {});
     });
   }
 }

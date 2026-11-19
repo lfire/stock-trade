@@ -39,13 +39,20 @@ export class PricePane extends PaneElement {
       // 半小时竖网格：分时图按 30 分钟一格划分
       const gc = rgba(PALETTE.grid);
       for (const m of ctx.halfHourMarks(r)) line(out, m.x, r.y, m.x, r.y + r.h, 1, gc);
-      const pre = ctx.dataset.manifest.preClose;
+      // 多日：日界用主色竖线区分（单日只有一根 dayStart，跳过避免重复画）
+      if (ctx.isMultiDay) {
+        for (const m of ctx.halfHourMarks(r)) {
+          if (m.dayStart) line(out, m.x, r.y, m.x, r.y + r.h, 1.4, rgba(PALETTE.neutral));
+        }
+      }
+      // 单日用当日昨收；多日用首日昨收作统一基准，各日价格轴/涨跌幅口径一致
+      const pre = ctx.intradayBasePrice ?? ctx.dataset.manifest.preClose;
       let dev = 0;
       for (const p of visible) dev = Math.max(dev, Math.abs(p.price - pre) / pre, Math.abs(p.avgPrice - pre) / pre);
       for (const p of [...ctx.openAuction, ...ctx.closeAuction]) dev = Math.max(dev, Math.abs(p.virtualPrice - pre) / pre);
       dev = Math.max(dev * 1.05, 0.005);
       const lo = pre * (1 - dev), hi = pre * (1 + dev);
-      ctx.priceScale = { min: lo, max: hi, pre, dev, symmetrical: true };
+      ctx.setPriceScale({ min: lo, max: hi, pre, dev, symmetrical: true });
       y = makeScale(lo, hi, top, bottom, 0);
 
       const zeroY = y(pre);
@@ -83,14 +90,27 @@ export class PricePane extends PaneElement {
         });
       }
 
-      const pricePts = [], avgPts = [];
+      const pricePts = [], avgPts = [], dayKeys = [];
       visible.forEach((p, i) => {
         const x = ctx.xForIndex(ctx.viewport.start + i, r);
         pricePts.push([x, y(p.price)]);
         avgPts.push([x, y(p.avgPrice)]);
+        dayKeys.push(p.tradeDate || ctx.dataset.manifest.tradeDate);
       });
-      polyline(out, pricePts, 1.6, rgba(PALETTE.chipLoss));
-      polyline(out, avgPts, 1.4, rgba(PALETTE.avg));
+      // 多日：日界处断开折线，避免把「前日收盘 → 次日开盘」画成一根垂直连线
+      const drawSegments = (pts, width, color) => {
+        let seg = [];
+        for (let i = 0; i < pts.length; i += 1) {
+          if (i > 0 && dayKeys[i] !== dayKeys[i - 1]) {
+            if (seg.length > 1) polyline(out, seg, width, color);
+            seg = [];
+          }
+          seg.push(pts[i]);
+        }
+        if (seg.length > 1) polyline(out, seg, width, color);
+      };
+      drawSegments(pricePts, 1.6, rgba(PALETTE.chipLoss));
+      drawSegments(avgPts, 1.4, rgba(PALETTE.avg));
     } else {
       let lo = Infinity, hi = -Infinity;
       for (const b of visible) { lo = Math.min(lo, b.low); hi = Math.max(hi, b.high); }
@@ -109,7 +129,7 @@ export class PricePane extends PaneElement {
           lo = Math.min(lo, v.value); hi = Math.max(hi, v.value);
         }
       }
-      ctx.priceScale = { min: lo, max: hi };
+      ctx.setPriceScale({ min: lo, max: hi });
       y = makeScale(lo, hi, top, bottom);
       // 分钟级高周期可能只剩 2~4 根，限制单根最大宽度避免蜡烛被拉满整屏
       const bw = Math.min(24, Math.max(1, (pr.w / ctx.visibleCount()) * 0.68));
@@ -167,13 +187,17 @@ export class PricePane extends PaneElement {
     const ap0 = ctx.auctionHover != null ? ctx.openAuction?.[ctx.auctionHover] : null;
     const cp0 = ctx.closingHover != null ? ctx.closeAuction?.[ctx.closingHover] : null;
     const seg = ap0 || cp0;
-    const date = seg ? `${m.tradeDate} ${seg.time}`
-      : (shown ? (ctx.mode === 'candle' ? (shown.label || shown.tradeDate) : `${m.tradeDate} ${shown.time}`) : m.tradeDate);
+    const shownDate = shown?.tradeDate || m.tradeDate;   // 多日分时用光标所在交易日
+    const date = seg ? `${shownDate} ${seg.time}`
+      : (shown ? (ctx.mode === 'candle' ? (shown.label || shown.tradeDate) : `${shownDate} ${shown.time}`) : m.tradeDate);
 
     // 结构化字段：日期时间只在标题行出现一次；指标拆成固定槽位 + 等宽数字，
     // hover 时只更新数值、不重建结构，避免整段文本重排造成跳动。
+    // 复权方式取自 manifest.adjust，不再把「前复权」写死（换后复权/不复权数据集自动跟随）
+    const adjustLabel = { qfq: '前复权', hfq: '后复权', none: '不复权' }[ctx.dataset?.manifest?.adjust] || '';
     const modeLabel = ctx.mode === 'candle'
-      ? `K线(前复权) · ${PERIOD_LABEL[ctx.period]}` : '分时';
+      ? `K线${adjustLabel ? `(${adjustLabel})` : ''} · ${PERIOD_LABEL[ctx.period]}`
+      : (ctx.isMultiDay ? `多日分时 · ${ctx.getIntradayDays()} 日` : '分时');
     // K 线：每条均线在光标处（无光标取最后一根）的实时值，颜色沿用该均线配置
     const maBars = ctx.getBars();
     const maAt = ctx.crosshair ?? (maBars.length - 1);
@@ -220,7 +244,11 @@ export class PricePane extends PaneElement {
       // 今日高/低取当日日 K 的 high/low：它含盘中瞬时极值与集合竞价，
       // 比按每分钟分时点取 max/min 更贴近行情软件显示的当日最高/最低价。
       const daily = ctx.dataset?.bars || [];
-      const today = daily[daily.length - 1] || {};
+      // 多日时「今日高/低」应对应光标所在交易日，而不是数据集最后一天
+      const pointDate = p.tradeDate || m.tradeDate;
+      const today = ctx.isMultiDay && pointDate
+        ? (daily.find((b) => b.tradeDate === pointDate) || daily[daily.length - 1] || {})
+        : (daily[daily.length - 1] || {});
       metrics = [
         { label: '高', value: (today.high ?? m.close).toFixed(2) },
         { label: '低', value: (today.low ?? m.close).toFixed(2) },
@@ -239,8 +267,9 @@ export class PricePane extends PaneElement {
         return { price: qBase.close.toFixed(2), change: chg, pct: qBase.pctChg ?? 0, up: chg >= 0 };
       })()
       : (() => {
-        const px = qBase.price ?? m.close, chg = px - m.preClose;
-        return { price: px.toFixed(2), change: chg, pct: chg / m.preClose * 100, up: chg >= 0 };
+        const base = ctx.intradayBasePrice ?? m.preClose;   // 多日按首日昨收计算累计涨跌幅
+        const px = qBase.price ?? m.close, chg = px - base;
+        return { price: px.toFixed(2), change: chg, pct: chg / base * 100, up: chg >= 0 };
       })();
     // 四色涨跌停图例改由头部 DOM 渲染，不再画在主图左上角
     const legend = ctx.mode === 'candle' && ctx.period === '1d' ? [
@@ -279,14 +308,23 @@ export class PricePane extends PaneElement {
     // 9:30 左对齐贴绘图区起点（避开竞价列 9:20），11:30/13:00 长文本居中，15:00 右对齐贴右端。
     const times = [];
     const pr = ctx.plotRect(r);
-    for (const m of ctx.halfHourMarks(r)) {
-      if (m.time === '13:00') continue;
-      const text = m.time === '11:30' ? '11:30/13:00' : m.time;
-      const x = m.time === '09:30' ? pr.x + 4
-        : (m.time === '11:30' ? m.x - 32 : m.x - 14);
-      times.push({ x, y: r.y + r.h - 16, text, color: PALETTE.textMuted });
+    if (ctx.isMultiDay) {
+      // 多日：只在每个交易日起点标日期（MM/DD），避免 5 日重复半小时标签挤成一团
+      for (const m of ctx.halfHourMarks(r)) {
+        if (!m.dayStart) continue;
+        const d = String(m.tradeDate || '');
+        times.push({ x: m.x + 4, y: r.y + r.h - 16, text: d.slice(5), color: PALETTE.textMuted });
+      }
+    } else {
+      for (const m of ctx.halfHourMarks(r)) {
+        if (m.time === '13:00') continue;
+        const text = m.time === '11:30' ? '11:30/13:00' : m.time;
+        const x = m.time === '09:30' ? pr.x + 4
+          : (m.time === '11:30' ? m.x - 32 : m.x - 14);
+        times.push({ x, y: r.y + r.h - 16, text, color: PALETTE.textMuted });
+      }
+      times.push({ x: pr.x + pr.w - 34, y: r.y + r.h - 16, text: '15:00', color: PALETTE.textMuted });
     }
-    times.push({ x: pr.x + pr.w - 34, y: r.y + r.h - 16, text: '15:00', color: PALETTE.textMuted });
     const pctFmt = (v) => {
       const p = ((v - pre) / pre) * 100;
       return `${p >= 0 ? '+' : ''}${p.toFixed(2)}%`;

@@ -45,13 +45,8 @@ export function parseMACDParams(input) {
     : resolveMACDParams();
 }
 
-/**
- * 兼容旧调用：MACD 参数固定为默认 (12,26,9)，可用 config 覆盖；count 参数保留但不再参与计算。
- * 短序列下预热不足属通达信正常语义（预热段留空），需要时可显式配置更小参数。
- */
-export function adaptiveMACDParams(_count, config) {
-  return resolveMACDParams(config);
-}
+// 已移除 adaptiveMACDParams（MACD 固定默认 12,26,9，不再随根数自适应）；
+// 需要部分配置请用 resolveMACDParams({ ...DEFAULT_MACD_PARAMS, ...patch })。
 
 export const maParamsText = (periods) => periods.map((p) => `MA${p}`).join('/');
 export const macdParamsText = (p) => `(${p.fast},${p.slow},${p.signal})`;

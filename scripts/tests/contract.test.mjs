@@ -38,17 +38,20 @@ test('exports 的每个目标文件都存在', () => {
     else for (const t of Object.values(v)) targets.push(t);
   }
   for (const t of targets) {
+    assert.ok(!t.includes('.js.js'), `exports 目标存在 .js.js 拼接陷阱：${t}`);
     const p = t.replace(/^\.\//, '');
     if (p.includes('*')) {
-      // 通配子路径：检查目录下存在同扩展名的实际文件
-      const [dir, ext] = [p.slice(0, p.lastIndexOf('/') + 1), p.slice(p.lastIndexOf('.') + 1)];
-      const files = readdirSync(join(root, dir));
-      assert.ok(files.some((f) => f.endsWith(`.${ext}`)), `exports 通配目标无匹配文件：${t}`);
+      // 通配子路径：目标目录必须存在且非空（新契约用 ./dist/elements/* 而非追加 .js）
+      const dir = join(root, p.slice(0, p.lastIndexOf('/')));
+      assert.ok(existsSync(dir), `exports 通配目标目录不存在：${t}`);
+      assert.ok(readdirSync(dir).length > 0, `exports 通配目标目录为空：${t}`);
     } else {
       assert.ok(existsSync(join(root, p)), `exports 目标不存在：${t}`);
     }
   }
   assert.ok(existsSync(join(root, 'dist/index.d.ts')), 'dist 缺类型入口');
+  assert.ok(existsSync(join(root, 'dist/events.js')) && existsSync(join(root, 'dist/frameworks/vue.js')),
+    'dist 缺少 ./events 或 ./vue 子路径产物');
 });
 
 test('类型声明覆盖入口导出的类与关键 API', () => {
@@ -62,20 +65,23 @@ test('类型声明覆盖入口导出的类与关键 API', () => {
   assert.ok(dts.includes('export declare class AuctionPane extends HTMLElement'), 'AuctionPane 继承声明错误');
 });
 
-test('事件映射与实现派发的事件名一致', () => {
+test('事件映射与 CHART_EVENTS 常量表双向一致', () => {
   const dts = read('src/index.d.ts');
   const map = dts.slice(dts.indexOf('StockChartEventMap'), dts.indexOf('// ---- 根容器 ----'));
   const declared = new Set([...map.matchAll(/'([a-z][a-z-]+)'\s*:/g)].map((m) => m[1]));
+  // 事件名不再散落在 new CustomEvent('...') 字面量里，统一登记在 src/events.js
+  const evSrc = read('src/events.js');
+  const table = evSrc.slice(evSrc.indexOf('CHART_EVENTS'), evSrc.indexOf('/** 统一派发'));
+  const emitted = new Set([...table.matchAll(/'([a-z][a-z-]+)'/g)].map((m) => m[1]));
+  for (const e of declared) assert.ok(emitted.has(e), `d.ts 声明了未登记的事件：${e}`);
+  for (const e of emitted) assert.ok(declared.has(e), `CHART_EVENTS 登记了未在 d.ts 声明的事件：${e}`);
+  assert.ok(declared.size >= 20, `事件映射数量异常：${declared.size}`);
+  // 全仓只有 events.js 允许直接构造 CustomEvent，统一 bubbles + composed
   const walk = (dir) => readdirSync(join(root, dir), { recursive: true })
     .filter((f) => typeof f === 'string' && f.endsWith('.js') && !f.startsWith('data/'))
     .map((f) => `${dir}/${f}`);
-  const emitted = new Set();
-  for (const f of walk('src')) {
-    const s = read(f);
-    for (const m of s.matchAll(/(?:emit|dispatchEvent)\(\s*(?:new CustomEvent\()?\s*'([a-z][a-z-]+)'/g)) emitted.add(m[1]);
-  }
-  for (const e of declared) assert.ok(emitted.has(e), `d.ts 声明了未派发的事件：${e}`);
-  assert.ok(declared.size >= 20, `事件映射数量异常：${declared.size}`);
+  const direct = walk('src').filter((f) => read(f).includes('new CustomEvent('));
+  assert.deepEqual(direct, ['src/events.js'], `仍有模块绕过 emitEvent：${direct.join(', ')}`);
 });
 
 test('dist 与 src 的模块文件一一对应', () => {

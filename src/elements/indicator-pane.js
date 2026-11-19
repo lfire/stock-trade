@@ -58,13 +58,15 @@ export class IndicatorPane extends PaneElement {
       res = { type: 'line', values: intradayVolumeRatioSeries(pts, avg5Daily) };
       vis = res.values.slice(ctx.viewport.start, ctx.viewport.end);
     } else if (isIntraday && (name === 'VOL' || name === 'AMOUNT')) {
-      const pts = ctx.getSeries();          // 分时模式已截到 14:57，尾盘由竞价段单独绘制
+      const pts = ctx.getSeries();
       const key = name === 'VOL' ? 'volume' : 'amount';
-      const pre = ctx.dataset.manifest.preClose;
-      res = { type: 'bar', values: pts.map((p, i) => ({
-        value: p[key],
-        up: i > 0 ? p.price >= pts[i - 1].price : p.price >= pre,
-      })) };
+      const pre = ctx.intradayBasePrice ?? ctx.dataset.manifest.preClose;
+      res = { type: 'bar', values: pts.map((p, i) => {
+        // 多日日界处不与前一日 15:00 价比，改用首日昨收兜底
+        const sameDay = i > 0 && (!p.tradeDate || !pts[i - 1].tradeDate
+          || p.tradeDate === pts[i - 1].tradeDate);
+        return { value: p[key], up: sameDay ? p.price >= pts[i - 1].price : p.price >= pre };
+      }) };
       vis = res.values.slice(ctx.viewport.start, ctx.viewport.end);
     } else {
       const bars = ctx.getBars();

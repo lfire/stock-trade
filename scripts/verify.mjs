@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { rect, line, rgba, makeScale } from '../src/gl/geometry.js';
 import { computeIndicator, ema, intradayVolumeRatio } from '../src/compute/indicators.js';
+import { limitPrices, limitRateFor } from './limit-rules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const problems = [];
@@ -31,7 +32,7 @@ ok(bars.every((b) => barKeys.every((k) => b[k] !== undefined)), 'Bar 字段缺�
 ok(bars.every((b) => b.high >= Math.max(b.open, b.close) - 1e-6 && b.low <= Math.min(b.open, b.close) + 1e-6), 'Bar OHLC 不自洽');
 ok(bars.every((b, i) => i === 0 || b.timestamp > bars[i - 1].timestamp), 'Bar 时间非升序');
 ok(bars.at(-1).tradeDate === m.tradeDate, '日 K 末根与 manifest 交易日不一致');
-// 涨跌停 / 炸板四态（沪市主板 10%，复权误差 0.5% 容差）与注入后的链条闭合
+// 涨跌停 / 炸板四态（比例按 manifest.limitRate 识别板块，判定容差固定 0.011 元）与注入后的链条闭合
 const VALID_STATES = ['', 'limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'];
 ok(bars.every((b) => VALID_STATES.includes(b.limitState || '')), 'limitState 取值非法');
 ['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'].forEach((s) =>
@@ -157,9 +158,9 @@ const orderKeys = ['ordId', 'time', 'price', 'volume', 'side', 'action', 'level'
 ok(orders.every((o) => orderKeys.every((k) => o[k] !== undefined)), '挂单字段缺失');
 ok(orders.every((o) => o.volume > 0 && o.volume % 100 === 0), '挂单委托量非 100 股整数倍');
 ok(orders.every((o) => Math.abs(o.price * 100 - Math.round(o.price * 100)) < 1e-6), '挂单价格非 0.01 步长');
-// 涨跌停价按 A 股最小变动价位取整到分（round(preClose × 0.9/1.1, 2)）
-const limitDown = Math.round(m.preClose * 0.9 * 100) / 100;
-const limitUp = Math.round(m.preClose * 1.1 * 100) / 100;
+// 涨跌停价按 A 股最小变动价位取整到分；比例取 manifest.limitRate，与生成脚本同一真源
+const { up: limitUp, down: limitDown } = limitPrices(m.preClose,
+  m.limitRate ?? limitRateFor(m.symbol, m.name));
 ok(orders.every((o) => o.price >= limitDown - 1e-6 && o.price <= limitUp + 1e-6), '挂单价格越出涨跌停');
 ok(orders.every((o, i) => i === 0 || osec(o.time) >= osec(orders[i - 1].time)), '挂单时间非升序');
 ok(orders.every((o) => o.action !== 'CANCEL'
@@ -408,6 +409,107 @@ ok(aggSrc.includes("label: '120 分钟'"), '120m 标签应为「120 分钟」');
 ok(html.includes('selPeriod.value = chart.getPeriod()'), '周期下拉未显式选中默认日 K');
 ok(readFileSync(path.join(root, 'src/core/chart-context.js'), 'utf8').includes('DEFAULT_PERIOD'),
   '组件未使用默认周期常量');
+// 多日分时：数据契约 + 竞价隐藏
+const multiPts = rd('src/data/intraday_5d.json');
+ok(multiPts.length === 5 * 242 && new Set(multiPts.map((p) => p.tradeDate)).size === 5,
+  '多日分时不是 5 日 × 242 点或缺少 tradeDate');
+ok(m.files.intradayMulti === 'intraday_5d.json' && m.tradeDates?.length === 5,
+  'manifest 缺少多日分时文件或交易日列表');
+ok(scSrc.includes('setIntradayDays(') && scSrc.includes("'intraday-days'"),
+  '组件缺少分时天数配置入口');
+ok(readFileSync(path.join(root, 'src/core/chart-context.js'), 'utf8').includes('!this.isMultiDay'),
+  '多日场景未隐藏竞价段');
+ok(readFileSync(path.join(root, 'src/elements/price-pane.js'), 'utf8').includes('ctx.isMultiDay'),
+  '主图未适配多日日期标签与价格轴基准');
+ok(html.includes('intraday-days-seg') && html.includes("urlParams.get('intraday-days')"),
+  '页面缺少分时天数控件或 URL 入口');
+ok(html.includes('data-days="5"') && html.includes('syncDaysSeg(n)'),
+  '多日入口未改为 tab 式分段控件');
+ok(html.includes("btnAuction.disabled = multi") && html.includes('多日不展示竞价'),
+  '多日场景未明确提示竞价不可用');
+// 逐笔视图文案：全仓（UI / 规则文档 / 数据契约 / 生成脚本）统一为「逐笔明细」；
+// 下面断言中的 '逐笔成交' 是**旧词检测目标**，属于代码逻辑，不是表述，故保留。
+ok(html.includes('data-set="trades">逐笔明细<') && html.includes("|| '逐笔明细'"),
+  '逐笔视图文案未统一为「逐笔明细」');
+ok(!html.includes('>逐笔成交<') && !html.includes("|| '逐笔成交'"), 'UI 仍残留「逐笔成交」文案');
+ok(readFileSync(path.join(root, 'README.md'), 'utf8').includes('「逐笔明细 / 全部挂单 / 全景盘口」'),
+  'README 界面描述未同步');
+// 规则表述也统一：调研文档 / 类型注释 / 数据契约 / 生成脚本 / SOURCES 全部不再出现旧词
+// （verify.mjs 自身与历史工作日志属于检测逻辑与 append-only 记录，不在扫描范围）
+for (const f of ['docs/02-扩展数据类型与Level2调研.md', 'src/types.js', 'src/index.d.ts',
+  'src/data/SOURCES.md', 'scripts/build-order-book.mjs', 'scripts/build-sample-data.mjs',
+  'index.html', 'README.md']) {
+  ok(!readFileSync(path.join(root, f), 'utf8').includes('逐笔成交'), `${f} 仍残留旧词`);
+}
+ok(readFileSync(path.join(root, 'docs/02-扩展数据类型与Level2调研.md'), 'utf8')
+  .includes('术语约定'), '调研文档缺少术语统一注记');
+// 文档不得把已删除的 API 写成现有能力，也不得残留旧口径注释
+const readmeText = readFileSync(path.join(root, 'README.md'), 'utf8');
+ok(!readmeText.includes('保留旧函数名兼容') && !readmeText.includes('`adaptiveMACDParams()` 不再随'),
+  'README 仍把已删除的 adaptiveMACDParams 写成现有 API');
+ok(!readmeText.includes('`setMA` 拷贝'), 'README 仍使用已收敛的 setMA 命名');
+// 检测目标用拼接构造，避免断言自身被 readFileSync(verify.mjs) 命中而自指失败
+const legacyTol = `复权误差 0.${'5'}% 容差`;
+ok(!readFileSync(path.join(root, 'scripts/verify.mjs'), 'utf8').includes(legacyTol),
+  'verify.mjs 注释仍残留旧容差口径');
+// 竞价文案：图表上删除「集合竞价」标题，开关统一用「竞价」
+ok(ctxSrc.includes("title: ''") && ctxSrc.includes("hoverTitle: '竞价'"),
+  '竞价段仍显示「集合竞价」标题');
+ok(html.includes('>竞价：开<') && html.includes("`竞价：${auctionOn ? '开' : '关'}`"),
+  '竞价开关文案未改为「竞价」');
+ok(!html.includes('>集合竞价：开<') && !html.includes('竞价(开盘+尾盘)'),
+  '仍残留「集合竞价」或「竞价(开盘+尾盘)」文案');
+ok(existsSync(path.join(root, 'scripts/tests/multi-day.test.mjs')),
+  '缺少多日分时数值回归测试');
+// 全量契约规范化：常量单一真源、数据可获得性标注、运行时契约测试
+ok(existsSync(path.join(root, 'src/core/market-constants.js'))
+  && readFileSync(path.join(root, 'src/compute/indicators.js'), 'utf8').includes('market-constants.js'),
+  'A 股业务常量未收口到单一真源');
+ok(m.provenance && Object.keys(m.files).every((k) => m.provenance[k]?.licensed !== undefined),
+  'manifest.provenance 未覆盖全部数据集');
+ok(Object.entries(m.provenance || {}).filter(([, v]) => v.availability === 'level2-licensed').length === 5,
+  'Level-2 数据集授权标注不完整');
+ok(readFileSync(path.join(root, 'src/data/SOURCES.md'), 'utf8').includes('派生数据集与 Level-2 授权边界'),
+  'SOURCES.md 未覆盖 orders/depthFull/depthScenarios');
+ok(existsSync(path.join(root, 'scripts/tests/contract-runtime.test.mjs')),
+  '缺少运行时契约回归测试');
+ok(readFileSync(path.join(root, 'src/core/data-store.js'), 'utf8').includes('已跳过'),
+  'data-store 缺失分片未按注释跳过');
+// P0：受控状态写入 + 只读门面
+ok(ctxSrc.includes('readonlyFacade()') && ctxSrc.includes('setPriceScale(')
+  && ctxSrc.includes('setViewport(') && ctxSrc.includes('setDepthFull('),
+  'ChartContext 缺少受控 setter / 只读门面');
+ok(scSrc.includes('this.ctx.readonlyFacade()'), 'getContext() 仍暴露可变 ChartContext');
+ok(readFileSync(path.join(root, 'src/elements/price-pane.js'), 'utf8').includes('ctx.setPriceScale('),
+  'price-pane 仍直接写 ctx.priceScale');
+ok(existsSync(path.join(root, 'scripts/tests/p0-controlled-state.test.mjs')),
+  '缺少 P0 受控状态回归测试');
+// P1/P2：事件 / exports / 数据可复现 / 常量单一真源 / 废弃 API
+const p1 = readFileSync(path.join(root, 'package.json'), 'utf8');
+ok(p1.includes('"pretest"') && p1.includes('"build"'), 'npm test 未保证 build 先执行');
+for (const sub of ['"./vue"', '"./events"', '"./core/*"', '"./gl/*"', '"./compute/*"']) {
+  ok(p1.includes(sub), `exports 缺子路径 ${sub}`);
+}
+ok(!p1.includes('.js.js'), 'exports 仍有 .js.js 拼接陷阱');
+ok(readFileSync(path.join(root, 'src/events.js'), 'utf8').includes('DEPTH_UNIT_REQUEST')
+  && readFileSync(path.join(root, 'src/elements/depth-book.js'), 'utf8').includes('DEPTH_UNIT_REQUEST'),
+  '盘口单位事件未统一为 request → change');
+const genSrc2 = readFileSync(path.join(root, 'scripts/build-sample-data.mjs'), 'utf8');
+ok(genSrc2.includes('RAW_CANDIDATES') && genSrc2.includes('rawCopyDir'), '原始数据未回退到归档副本');
+ok(genSrc2.includes('SOURCE_DATE_EPOCH') && !genSrc2.includes("generatedAt: '2026-11-16"),
+  'generatedAt 仍硬编码');
+const instrument = rd('src/data/raw/instrument.json');
+ok(instrument.floatShares === m.floatShares && typeof m.floatSharesSource === 'string'
+  && m.floatSharesSource.length > 0, 'floatShares 与归档不符或缺少来源标注');
+ok(readFileSync(path.join(root, 'scripts/build-order-book.mjs'), 'utf8').includes('shared.mjs')
+  && !readFileSync(path.join(root, 'scripts/build-order-book.mjs'), 'utf8').includes('function mulberry32'),
+  '生成脚本未共用 PRNG 单一真源');
+ok(readFileSync(path.join(root, 'src/elements/price-pane.js'), 'utf8').includes('manifest?.adjust'),
+  '复权标签仍写死');
+ok(!readFileSync(path.join(root, 'src/core/indicator-params.js'), 'utf8').includes('export function adaptiveMACDParams'),
+  '废弃的 adaptiveMACDParams 未移除');
+ok(existsSync(path.join(root, 'scripts/tests/p1p2-architecture.test.mjs')),
+  '缺少 P1/P2 架构回归测试');
 const dbSrc = readFileSync(path.join(root, 'src/elements/depth-book.js'), 'utf8');
 ok(dbSrc.includes('var(--sc-bar-h') && dbSrc.includes('var(--sc-split-h'),
   '盘口两条行或买卖间隙未用统一变量');

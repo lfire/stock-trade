@@ -29,7 +29,8 @@ const sources = [
   },
   {
     name: '腾讯 分时 minute',
-    file: 'tx_minute.json',
+    // 规范名与 build-sample-data.mjs 读取的文件一致；alias 保留旧名便于复核
+    file: 'hist_intraday.json', alias: 'tx_minute.json',
     url: 'https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh600519',
   },
   {
@@ -76,7 +77,8 @@ for (const s of sources) {
     const empty = bytes === 0;
     if (!empty) ok += 1;
     writeFileSync(path.join(rawDir, s.file), buf);
-    console.log(`${empty ? 'EMPTY' : 'OK   '} ${s.name.padEnd(28)} -> ${s.file} (${bytes} B)`);
+    if (!empty && s.alias) writeFileSync(path.join(rawDir, s.alias), buf);   // 同接口原始备份
+    console.log(`${empty ? 'EMPTY' : 'OK   '} ${s.name.padEnd(28)} -> ${s.file}${s.alias ? ` (+ ${s.alias})` : ''} (${bytes} B)`);
   } catch (e) {
     console.log(`FAIL  ${s.name.padEnd(28)} -> ${s.file}: ${e.message.slice(0, 90)}`);
   }

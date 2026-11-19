@@ -6,3 +6,4 @@ export * from './gl/geometry.js';
 export * from './compute/indicators.js';
 export * from './core/bar-aggregator.js';
 export * from './core/indicator-params.js';
+export * from './core/market-constants.js';

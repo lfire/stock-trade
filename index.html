@@ -55,6 +55,13 @@
   /* 分时 / K 线各自的功能组：按当前模式整组显示，不再置灰 */
   .chart-tools .tool-group{display:inline-flex;align-items:center;gap:8px}
   .chart-tools .tool-group[hidden]{display:none}
+  /* 多日分时：tab 式分段控件，点击即时切换，active 复用全局 button.active */
+  .chart-tools .seg{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel)}
+  .chart-tools .seg button{border:0;border-right:1px solid var(--line);border-radius:0;padding:5px 9px;font:11px/1.2 system-ui;background:transparent;white-space:nowrap}
+  .chart-tools .seg button:last-child{border-right:0}
+  .chart-tools .seg button:hover:not(.active){background:color-mix(in srgb,var(--sc-link,#1B5FBF) 8%,var(--panel))}
+  .chart-tools .seg button.active{border-color:transparent}
+  .chart-tools button:disabled{opacity:.55;cursor:not-allowed}
   .head-line2{display:flex;align-items:center;justify-content:flex-end;gap:8px;white-space:nowrap;min-width:0;font:11px/1.4 system-ui,-apple-system,sans-serif;color:var(--muted)}
   /* 四色涨跌停图例移到头部右侧，与指标行之间用竖线分隔 */
   .head-line2 .legend{display:flex;align-items:center;gap:6px;white-space:nowrap;padding-right:8px;border-right:1px solid var(--line)}
@@ -232,9 +239,19 @@
           <button id="btn-intraday" class="active">分时</button>
           <button id="btn-candle">K 线</button>
           <span class="sep"></span>
-          <!-- 分时专属：集合竞价（开盘 + 尾盘）开关 -->
+          <!-- 分时专属：多日分时段控件（tab 式即时切换）+ 竞价开关（多日时禁用并说明原因） -->
           <span class="tool-group" id="intraday-only">
-            <button id="btn-auction" class="active">集合竞价：开</button>
+            <label style="color:var(--muted)">多日</label>
+            <span class="seg" id="intraday-days-seg" role="group" aria-label="分时天数">
+              <button type="button" data-days="1" class="active">1 日</button>
+              <button type="button" data-days="2">2 日</button>
+              <button type="button" data-days="3">3 日</button>
+              <button type="button" data-days="4">4 日</button>
+              <button type="button" data-days="5">5 日</button>
+            </span>
+            <span id="intraday-provenance" style="color:var(--muted);font-size:10px"></span>
+            <span class="sep"></span>
+            <span id="auction-toggle-wrap"><button id="btn-auction" class="active">竞价：开</button></span>
           </span>
           <!-- K 线专属：周期 / 筹码峰 / 均线设置 -->
           <span class="tool-group" id="candle-only" hidden>
@@ -351,7 +368,15 @@ chart.addEventListener('depth-scenario-change', (e) => {
   if (depth) book.setData([depth]);
   if (detailCover && detailSet === 'panorama') renderPanorama();
 });
-chart.addEventListener('depth-unit-change', (e) => book.setUnit?.(e.detail.unit));
+// 唯一的 depth-unit-change 消费点：同步十档盘口、下拉与全景视图；
+// 不再回调 chart.setDepthUnit（否则事件回环）。盘口按钮点击由 depth-unit-request 触发同一链路。
+chart.addEventListener('depth-unit-change', (e) => {
+  const unit = e.detail.unit === 'amount' ? 'amount' : 'volume';
+  book.setUnit?.(unit);
+  const sel = document.getElementById('sel-depth-unit');
+  if (sel) sel.value = unit;
+  if (detailCover && detailSet === 'panorama') renderPanorama();
+});
 
 function bindDataset(ds) {
   // 逐笔涨跌口径：以上一笔成交价为基准，首行对昨收；涨 1 / 跌 -1 / 平 0
@@ -411,6 +436,37 @@ const pair = (a, b, fn) => {
 let auctionOn = true, chipsOn = true;
 const btnAuction = document.getElementById('btn-auction');
 const btnChips = document.getElementById('btn-chips');
+// ---- 多日分时：tab 式分段控件，点击即时切换；>1 日时竞价段不展示，开关禁用并说明原因 ----
+const daysSeg = document.getElementById('intraday-days-seg');
+const auctionWrap = document.getElementById('auction-toggle-wrap');
+const intradayProvenance = document.getElementById('intraday-provenance');
+/** 竞价按钮单一真源：多日时禁用并说明原因，避免被 syncToggles() 覆盖 */
+function syncAuctionButton() {
+  const multi = chart.getIntradayDays() > 1;
+  btnAuction.disabled = multi;
+  btnAuction.classList.toggle('active', !multi && auctionOn);
+  btnAuction.textContent = multi ? '多日不展示竞价'
+    : `竞价：${auctionOn ? '开' : '关'}`;
+}
+function syncDaysSeg(days) {
+  for (const b of daysSeg.querySelectorAll('button[data-days]')) {
+    b.classList.toggle('active', Number(b.dataset.days) === Number(days));
+    b.setAttribute('aria-pressed', String(Number(b.dataset.days) === Number(days)));
+  }
+}
+function applyIntradayDays(days) {
+  const n = chart.setIntradayDays(days);
+  syncDaysSeg(n);
+  syncAuctionButton();
+  // 多日前 N-1 日历史分钟分时无免费公开源，按日 K OHLC 拟真，界面明确提示
+  intradayProvenance.textContent = n > 1 ? `前 ${n - 1} 日为拟真数据` : '';
+  return n;
+}
+daysSeg.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-days]');
+  if (b) applyIntradayDays(Number(b.dataset.days));
+});
+syncDaysSeg(chart.getIntradayDays());
 // ---- 交易明细：侧栏一级展开 + 占满图表区的多组逐笔视图 ----
 // 一级：点击侧栏明细区域 → 十档收缩为 1 档、明细占满剩余高度，底部出现「查看逐笔明细」
 // 二级：点击底部触发点 → 在 stock-chart 内铺一层覆盖视图，按宽度把逐笔数据分成多组并排展示（非弹窗）
@@ -433,7 +489,7 @@ function applySideExpanded(on) {
 /** 按覆盖层宽度决定分组数：每组约 270px，最多 6 组 */
 const detailGroupCount = (width) => Math.max(1, Math.min(6, Math.floor(width / 270)));
 const detailRows = () => (detailSet === 'orders' ? allOrders : allTrades);
-const detailLabel = () => ({ orders: '全部挂单', panorama: '全景盘口' }[detailSet] || '逐笔成交');
+const detailLabel = () => ({ orders: '全部挂单', panorama: '全景盘口' }[detailSet] || '逐笔明细');
 
 /** 组标题实时显示该组当前可见的时间段，滚动时各组时间连续衔接 */
 const DETAIL_ROW_H = LAYOUT.rowH;   // 与 trade-tape / 盘口数据行同一真源
@@ -589,7 +645,7 @@ function openTapeDetail(set = 'trades') {
   detailCover.innerHTML = `
     <div class="cover-bar">
       <span class="cover-tabs">
-        <button type="button" data-set="trades">逐笔成交</button>
+        <button type="button" data-set="trades">逐笔明细</button>
         <button type="button" data-set="orders">全部挂单</button>
         <button type="button" data-set="panorama">全景盘口</button>
       </span>
@@ -663,13 +719,13 @@ const syncToggles = (mode) => {
   // 分时 / K 线功能各自成组：切到相应图才展示，不再把不适用控件置灰
   document.getElementById('intraday-only').hidden = !intraday;
   document.getElementById('candle-only').hidden = intraday;
-  btnAuction.textContent = `竞价(开盘+尾盘)：${auctionOn ? '开' : '关'}`;
+  syncAuctionButton();
   btnChips.textContent = `筹码峰：${chipsOn ? '开' : '关'}`;
-  btnAuction.classList.toggle('active', auctionOn);
   btnChips.classList.toggle('active', chipsOn);
   placeTape(mode);
 };
 btnAuction.addEventListener('click', () => {
+  if (btnAuction.disabled) return;   // 多日场景竞价不可用
   auctionOn = !auctionOn;
   chart.setAuctionEnabled(auctionOn);
   syncToggles(chart.getState().mode);
@@ -690,7 +746,7 @@ document.getElementById('sel-subplots').addEventListener('change', (e) => {
 });
 document.getElementById('sel-scenario').addEventListener('change', (e) => applyScenario(e.target.value));
 document.getElementById('sel-depth-unit').addEventListener('change', (e) => applyDepthUnit(e.target.value));
-book.addEventListener('depth-unit-change', (e) => applyDepthUnit(e.detail.unit));
+// 单位切换统一由 <stock-chart> 派发 depth-unit-change；子组件只发 request，这里不再重复监听
 // 主图基本信息同步到图表卡片头部：时间只在第一行出现一次；
 // 指标拆成固定槽位，同一场景下结构不重建、只改数值（等宽数字右对齐），减少 hover 跳动。
 chart.addEventListener('head-change', (e) => {
@@ -788,6 +844,9 @@ if (scrollParam !== null && Number.isFinite(Number(scrollParam))) {
 // ?auction=off / ?chips=off 可直接验证开关（也可用工具栏按钮）
 if (urlParams.get('auction') === 'off') { auctionOn = false; chart.setAuctionEnabled(false); }
 if (urlParams.get('chips') === 'off') { chipsOn = false; chart.setChipsEnabled(false); }
+// ?intraday-days=1..5 直接切换分时天数，便于验证/分享多日场景（多日自动隐藏竞价）
+const daysParam = urlParams.get('intraday-days');
+if (daysParam !== null && Number.isFinite(Number(daysParam))) applyIntradayDays(Number(daysParam));
 // ?crosshair=N 可固定十字光标位置，便于验证/分享数值显示
 const chParam = urlParams.get('crosshair');
 if (chParam !== null && Number.isFinite(Number(chParam))) chart.setCrosshair(Number(chParam));

@@ -2,9 +2,9 @@
  * A 股涨跌停规则（截至 2026-11，沪深主板 / 创业板 / 科创板 / 北交所现行规则）。
  * 独立模块：生成脚本与数值回归测试共用同一份口径，测试 import 不会触发数据生成副作用。
  */
-export const PRICE_TICK = 0.01;   // A 股最小价格变动单位（元）
-export const PRICE_EPS = 0.011;   // 判定容差：1 个最小变动单位 + 浮点余量
-const r2 = (n) => Math.round(n * 100) / 100;
+import { PRICE_TICK, PRICE_EPS } from '../src/core/market-constants.js';
+import { r2 } from './shared.mjs';
+export { PRICE_TICK, PRICE_EPS };   // 单一真源：与组件层共用，避免两处各写一份 0.011
 
 /**
  * 涨跌幅比例：主板 10%（ST/*ST 5%）、创业板 300/301 与科创板 688/689 20%

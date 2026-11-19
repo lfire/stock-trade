@@ -2,6 +2,7 @@
 // 整个 <stock-chart> 只有一个 canvas / 一个 context，避免浏览器 context 数量上限。
 import { rgba } from './geometry.js';
 import { PALETTE } from '../types.js';
+import { emitEvent, CHART_EVENTS } from '../events.js';
 
 const VS = `#version 300 es
 in vec2 a_position;
@@ -46,7 +47,7 @@ export class WebGL2Renderer {
     this.onContextLost = (e) => {
       e.preventDefault();
       this.lost = true;
-      canvas.dispatchEvent(new CustomEvent('webglcontext-lost', { bubbles: true }));
+      emitEvent(canvas, CHART_EVENTS.WEBGL_CONTEXT_LOST, {});
     };
     this.onContextRestored = () => {
       // context lost 后 program / VBO / attrib / uniform 句柄全部失效，必须重建；
@@ -54,11 +55,9 @@ export class WebGL2Renderer {
       try {
         this.initGL();
         this.lost = false;
-        canvas.dispatchEvent(new CustomEvent('webglcontext-restored', { bubbles: true, composed: true }));
+        emitEvent(canvas, CHART_EVENTS.WEBGL_CONTEXT_RESTORED, {});
       } catch (e) {
-        canvas.dispatchEvent(new CustomEvent('chart-error', {
-          detail: { message: `WebGL 上下文恢复失败：${e.message}` }, bubbles: true, composed: true,
-        }));
+        emitEvent(canvas, CHART_EVENTS.CHART_ERROR, { message: `WebGL 上下文恢复失败：${e.message}` });
       }
     };
     canvas.addEventListener('webglcontextlost', this.onContextLost);
@@ -150,5 +149,4 @@ export class WebGL2Renderer {
   }
 }
 
-/** @deprecated 清屏色改为在 render() 中按 PALETTE.background 动态取；保留常量仅为兼容 */
-export const CLEAR = rgba(PALETTE.background);
+// 已移除废弃的 CLEAR 常量：清屏色在 render() 中按 PALETTE.background 动态取，全仓无引用。

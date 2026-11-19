@@ -7,6 +7,8 @@ import { PALETTE, AXIS_GUTTER_L, AXIS_GUTTER_R, LAYOUT, withPalette } from '../t
 import { rgba, rect, line } from '../gl/geometry.js';
 import { buildPhaseGeometry } from './auction-layer.js';
 import { DEFAULT_MACD_PARAMS, resolveMACDParams } from './indicator-params.js';
+import { HALF_HOUR_MARKS, TIME } from './market-constants.js';
+import { emitEvent } from '../events.js';
 import { createComputeEngine } from '../compute/engine.js';
 import { WebGL2Renderer } from '../gl/renderer.js';
 import { PERIODS, PERIOD_LABEL, DEFAULT_PERIOD, buildBars } from './bar-aggregator.js';
@@ -27,9 +29,9 @@ const defaultMA = (palette = PALETTE) => [
 function segmentOverlay(ctx, parts, span, cfg) {
   const { r, v, pts, title, ticks, hover, hoverTitle, basePrice, pctLabel, phaseOf, floatLeft,
     compact } = cfg;
-  // 窄段（尾盘竞价）不显示标题，避免与主图右坐标栏的百分比刻度挤压
-  // 与副图信息栏一致：浅灰轻量标题条、灰色细体，时间范围由下方刻度承担不再重复
-  if (!compact) parts.push(span(r.x + 3, r.y + 2, title, PALETTE.textMuted, true));
+  // 竞价段不再显示「集合竞价」标题条；窄段（尾盘竞价）同样不显示，避免与右坐标栏挤压
+  // 时间范围由下方刻度承担，不再重复标文字
+  if (!compact && title) parts.push(span(r.x + 3, r.y + 2, title, PALETTE.textMuted, true));
   ticks.forEach((t) => parts.push(span(t.x, r.y + r.h - 16, t.text, PALETTE.textMuted)));   // 与主图时间轴同一基线
 
   // 竞价量柱与第一个成交量副图共用全局左坐标栏刻度，这里不再单独标数字刻度
@@ -49,6 +51,7 @@ function segmentOverlay(ctx, parts, span, cfg) {
   parts.push(`<div style="position:absolute;left:${bx}px;top:${by}px;width:232px;box-sizing:border-box;background:var(--sc-bg,#fff);border:1px solid var(--sc-line,#DDE2E8);border-radius:8px;padding:10px 12px;pointer-events:none;box-shadow:0 6px 18px rgba(31,35,41,.10);font:11px/1.5 system-ui,-apple-system,sans-serif;color:var(--sc-text,#1F2329)">`
     + `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;font-weight:500">${hoverTitle} <span style="color:var(--sc-muted,#6B7280);font-weight:400;${num}">${p.time}</span></span>`
     + `<span style="flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:4px;background:${phaseBg};color:${phaseColor}">${phaseText}</span></div>`
+    + `<div style="font-size:10px;color:var(--sc-muted,#9AA3AF);margin-top:2px">示意撮合 · 9:15–9:24 虚拟量历史不留存</div>`
     + `<div style="margin:8px 0;padding:8px 0;border-top:1px solid var(--sc-line,#EEF0F3);border-bottom:1px solid var(--sc-line,#EEF0F3)">`
     + `<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="color:var(--sc-muted,#6B7280)">虚拟撮合价</span><b style="font-size:16px;font-weight:500;${num}">${p.virtualPrice.toFixed(2)}</b></div>`
     + `<div style="display:flex;align-items:baseline;justify-content:flex-end;gap:6px;margin-top:2px"><span style="color:${pctColor};font-weight:500;${num}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span><span style="color:var(--sc-muted,#9AA3AF);font-size:10px">${pctLabel}</span></div></div>`
@@ -87,6 +90,9 @@ export class ChartContext {
     this.pointer = null;              // 鼠标精确像素位置 {x,y}，坐标轴定位标签以它为中心
     this.auctionEnabled = true;       // 同时控制开盘 / 尾盘两段竞价
     this.chipsEnabled = true;
+    this.intradayDays = 1;            // 分时天数：1 = 单日（默认），>1 = 多日拼接
+    this.isMultiDay = false;          // 多日场景：竞价段不展示
+    this.intradayBasePrice = null;    // 分时价格轴基准：单日昨收 / 多日首日昨收
     this.openAuction = [];
     this.closeAuction = [];
     this.auctionPriceRect = null;
@@ -107,20 +113,138 @@ export class ChartContext {
   unregisterPane(el) { this.panes = this.panes.filter((p) => p !== el); this.applyLayout(); }
 
   emit(name, detail) {
-    this.host.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
+    emitEvent(this.host, name, detail);
+  }
+
+  // ---------------------------------------------------------------- 受控状态写入
+  // 所有外部（组件层 / 页面层）对 ctx 状态的修改都必须走这里；core 内部仍直接赋值。
+  /** 初始化配置：仅 connectedCallback 使用，数据未就绪，不 emit / 不重绘 */
+  configure({ mode, auctionEnabled, chipsEnabled } = {}) {
+    if (mode === 'intraday' || mode === 'candle') this.mode = mode;
+    if (typeof auctionEnabled === 'boolean') this.auctionEnabled = auctionEnabled;
+    if (typeof chipsEnabled === 'boolean') this.chipsEnabled = chipsEnabled;
+    return this;
+  }
+
+  /** 实例色板：只接受对象，浅拷贝防止外部改到内部 */
+  setPalette(palette) {
+    if (!palette || typeof palette !== 'object') return { ...this.palette };
+    this.palette = { ...palette };
+    return { ...this.palette };
+  }
+
+  /**
+   * 每帧价格轴：由 price-pane 计算后写入，竞价段 / 筹码峰 / 副图复用。
+   * 校验 min/max 为有限数且 max >= min，避免脏数据让后续 y 映射产生 NaN。
+   */
+  setPriceScale(scale) {
+    const min = Number(scale?.min), max = Number(scale?.max);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return { ...this.priceScale };
+    this.priceScale = { ...scale, min, max };
+    return { ...this.priceScale };
+  }
+
+  /** 全景委托簿：唯一写入 dataset.depthFull 的入口 */
+  setDepthFull(pano) {
+    if (!this.dataset) return null;
+    this.dataset.depthFull = pano ?? null;
+    this.requestRender();
+    return this.dataset.depthFull;
+  }
+
+  /** 视口：钳制到当前序列范围，避免负数 / start>end / 越界导致 xForIndex 产生 NaN */
+  setViewport({ start = 0, end } = {}) {
+    const n = this.getSeries().length;
+    const clamp = (v, fallback) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(n, Number(v))) : fallback);
+    const s = clamp(start, 0), e = Math.max(s, clamp(end, n));
+    this.viewport = { start: s, end: e };
+    this.emit('viewport-change', { start: s, end: e, mode: this.mode });
+    this.requestRender();
+    return { ...this.viewport };
+  }
+
+  /**
+   * 只读门面：getContext() 返回它，而不是可变的 ChartContext 本体。
+   * 冻结对象 + getter 浅拷贝，外部既不能改状态字段，也拿不到内部数组的写引用；
+   * 需要改状态请用 <stock-chart> 的公开方法（内部转调上面的受控 setter）。
+   */
+  readonlyFacade() {
+    const ctx = this;
+    const denied = (prop) => {
+      throw new TypeError(`[stock-chart] ChartContext.${String(prop)} 只读；请使用 <stock-chart> 的公开方法改状态`);
+    };
+    return new Proxy(Object.freeze({
+      get mode() { return ctx.mode; },
+      get period() { return ctx.period; },
+      get viewport() { return { ...ctx.viewport }; },
+      get priceScale() { return { ...ctx.priceScale }; },
+      get palette() { return { ...ctx.palette }; },
+      get isMultiDay() { return ctx.isMultiDay; },
+      get intradayDays() { return ctx.intradayDays; },
+      get auctionEnabled() { return ctx.auctionEnabled; },
+      get chipsEnabled() { return ctx.chipsEnabled; },
+      get dataset() { return ctx.dataset ? { ...ctx.dataset } : null; },
+      getSeries: () => ctx.getSeries().slice(),
+      getBars: () => ctx.getBars().slice(),
+      getVisible: () => ctx.getVisible().slice(),
+      getSubplotConfig: () => ctx.getSubplotConfig().map((c) => ({ ...c })),
+      getSubplotLayout: () => ctx.getSubplotLayout().map((c) => ({ ...c })),
+      getMACDParams: () => ctx.getMACDParams(),
+      getIntradayDays: () => ctx.getIntradayDays(),
+      halfHourMarks: (rect) => ctx.halfHourMarks(rect).map((m) => ({ ...m })),
+    }), {
+      set: (_t, prop) => { denied(prop); return true; },
+      deleteProperty: (_t, prop) => { denied(prop); return true; },
+      defineProperty: (_t, prop) => { denied(prop); return true; },
+    });
   }
 
   setDataset(dataset) {
     this.dataset = dataset;
+    // 保留原始单日分时，切换回 1 日时无需重新 fetch
+    this.dataset.intradaySingle = dataset.intraday || [];
     this.barsCache.clear();
-    const all = dataset.auction || [];
-    this.openAuction = all.filter((p) => p.phase === 'open');
-    this.closeAuction = all.filter((p) => p.phase === 'close');
-    this.resetViewport();
-    this.applyLayout();               // 尾盘竞价段依赖 closeAuction，数据到达后必须重新布局
+    this.intradayBasePrice = dataset.manifest?.preClose ?? null;
+    this.setIntradayDays(this.intradayDays);   // 内部完成序列切换 / 竞价隐藏 / 视口 / 布局 / 重绘
     this.emit('data-loaded', { symbol: dataset.manifest.symbol, tradeDate: dataset.manifest.tradeDate });
     this.requestRender();
   }
+
+  /**
+   * 切换分时天数：从 dataset.intradayMulti（扁平多日点，每点带 tradeDate）取最后 N 个交易日。
+   * 多日场景不展示集合竞价：清空 openAuction/closeAuction，并让 applyLayout() 不再分配竞价列。
+   */
+  setIntradayDays(days) {
+    const n = Math.max(1, Math.min(5, Math.round(Number(days) || 1)));
+    this.intradayDays = n;
+    if (!this.dataset) return n;
+    const multi = this.dataset.intradayMulti || [];
+    const dates = [...new Set(multi.map((p) => p.tradeDate).filter(Boolean))];
+    const chosen = n > 1 && dates.length > 1 ? dates.slice(-Math.min(n, dates.length)) : [];
+    this.isMultiDay = chosen.length > 1;
+    this.dataset.intraday = this.isMultiDay
+      ? multi.filter((p) => chosen.includes(p.tradeDate))
+      : (this.dataset.intradaySingle || this.dataset.intraday || []);
+    const m = this.dataset.manifest || {};
+    const byDate = m.preCloseByDate || {};
+    const first = this.isMultiDay ? chosen[0] : m.tradeDate;
+    this.intradayBasePrice = byDate[first] ?? m.preClose ?? null;
+    // 多日时竞价数组清空：避免价格轴 dev 仍被 virtualPrice 撑大（视觉上等价于隐藏竞价）
+    const all = this.isMultiDay ? [] : (this.dataset.auction || []);
+    this.openAuction = all.filter((p) => p.phase === 'open');
+    this.closeAuction = all.filter((p) => p.phase === 'close');
+    this.crosshair = null;
+    this.pointer = null;
+    this.resetViewport();
+    this.applyLayout();
+    this.emit('intraday-days-change', {
+      days: this.isMultiDay ? chosen.length : 1, multiDay: this.isMultiDay, dates: chosen,
+      simulatedDays: this.isMultiDay ? chosen.length - 1 : 0,   // 末日真实，其余按日 K 拟真
+    });
+    this.requestRender();
+    return this.isMultiDay ? chosen.length : 1;
+  }
+  getIntradayDays() { return this.intradayDays; }
 
   setMode(mode) {
     if (mode !== 'candle' && mode !== 'intraday') return;
@@ -130,6 +254,8 @@ export class ChartContext {
       subs[0].setAttribute('indicator', 'VOL');
     }
     this.mode = mode;
+    this.crosshair = null;      // 多日/单日点数不同，旧索引可能越界
+    this.pointer = null;
     this.resetViewport();
     this.applyLayout();
     this.emit('viewport-change', { ...this.viewport, mode });
@@ -146,7 +272,8 @@ export class ChartContext {
 
   // ---- K 线均线配置：可添加、删除、改周期 / 颜色 ----
   /** 整体替换；period 规整为正整数并去重，最多 8 条，返回新配置 */
-  setMA(list) {
+  /** 均线配置单一写入口（组件层 setMovingAverages / addMA / removeMA / updateMA 都转调这里） */
+  setMovingAverages(list) {
     const seen = new Set();
     this.maConfig = (Array.isArray(list) ? list : []).slice(0, 8).map((m) => {
       let period = Math.max(1, Math.round(Number(m.period) || 5));
@@ -155,14 +282,16 @@ export class ChartContext {
       const color = /^#[0-9A-Fa-f]{6}$/.test(m.color || '') ? m.color : PALETTE.avg;
       return { period, color };
     });
-    this.emit('ma-config-change', { list: this.maConfig });
+    // 事件与返回值都给拷贝，避免消费者改到内部 maConfig（对齐 macd-params-change 的做法）
+    const snapshot = this.maConfig.map((m) => ({ ...m }));
+    this.emit('ma-config-change', { list: snapshot });
     this.requestRender();
-    return this.maConfig;
+    return snapshot;
   }
-  addMA(cfg) { return this.setMA([...this.maConfig, cfg || {}]); }
-  removeMA(period) { return this.setMA(this.maConfig.filter((m) => m.period !== Number(period))); }
+  addMA(cfg) { return this.setMovingAverages([...this.maConfig, cfg || {}]); }
+  removeMA(period) { return this.setMovingAverages(this.maConfig.filter((m) => m.period !== Number(period))); }
   updateMA(period, patch) {
-    return this.setMA(this.maConfig.map((m) => (m.period === Number(period) ? { ...m, ...patch } : m)));
+    return this.setMovingAverages(this.maConfig.map((m) => (m.period === Number(period) ? { ...m, ...patch } : m)));
   }
 
   /** 设置 MACD 参数（部分配置合并到当前值），非法值回退默认 (12,26,9) */
@@ -252,14 +381,15 @@ export class ChartContext {
     this.requestRender();
   }
 
-  /** 分时主图画到 15:00 收盘（含 14:58/14:59 价有量无与 15:00 统一撮合）；
-   *  15:01–15:30 盘后固定价段不画。14:57–15:00 的 9 秒级虚拟撮合仍由独立尾盘竞价列放大绘制。 */
+  /** 分时主图画到 15:00 收盘；15:01–15:30 盘后固定价段不画。
+   *  多日序列是扁平拼接数组（每点带 tradeDate），必须逐点过滤盘后点，
+   *  不能用 findIndex 截断（否则第一天盘后点会丢掉后续所有交易日）。 */
   getSeries() {
     if (!this.dataset) return [];
     if (this.mode !== 'intraday') return this.getBars();
-    const arr = this.dataset.intraday;
-    const cut = arr.findIndex((p) => p.time > '15:00');
-    return cut < 0 ? arr : arr.slice(0, cut);
+    // 收盘时刻由 manifest.session 决定（缺省回退 15:00），不再把交易时段写死在代码里
+    const end = this.dataset.manifest?.session?.at?.(-1)?.close || TIME.SESSION_END;
+    return (this.dataset.intraday || []).filter((p) => p.time <= end);
   }
   getVisible() { return this.getSeries().slice(this.viewport.start, this.viewport.end); }
   visibleCount() { return Math.max(1, this.viewport.end - this.viewport.start); }
@@ -287,16 +417,26 @@ export class ChartContext {
     return pr.x + ((i - this.viewport.start) + 0.5) * (pr.w / this.visibleCount());
   }
 
-  /** 分时图半小时刻度：返回落在当前 viewport 内的 { x, time }，主图与副图共用同一组 x */
+  /** 分时图半小时刻度：按 tradeDate 分日生成（多日时每个交易日都有自己的一套刻度），
+   *  返回 { x, time, tradeDate, dayStart }，dayStart 用于画日界竖线与日期标签。 */
   halfHourMarks(rect) {
     if (this.mode !== 'intraday' || !this.dataset) return [];
     const s = this.getSeries();
-    const marks = ['09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30'];
+    const fallbackDate = this.dataset.manifest?.tradeDate || '';
+    const marks = HALF_HOUR_MARKS;
+    const groups = new Map();
+    s.forEach((p, i) => {
+      const key = p.tradeDate || fallbackDate;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(i);
+    });
     const out = [];
-    for (const t of marks) {
-      const i = s.findIndex((p) => p.time === t);
-      if (i < this.viewport.start || i >= this.viewport.end) continue;
-      out.push({ x: this.xForIndex(i, rect), time: t });
+    for (const [date, idxs] of groups) {
+      for (const t of marks) {
+        const i = idxs.find((idx) => s[idx].time === t);
+        if (i == null || i < this.viewport.start || i >= this.viewport.end) continue;
+        out.push({ x: this.xForIndex(i, rect), time: t, tradeDate: date, dayStart: i === idxs[0] });
+      }
     }
     return out;
   }
@@ -403,7 +543,8 @@ export class ChartContext {
     if (!this.size) return;
     const { w: width, h: height } = this.size;
     const isIntraday = this.mode === 'intraday';
-    const auctionOn = this.auctionEnabled && isIntraday;
+    // 多日分时场景不展示集合竞价：rect 置 null 后几何/hover/浮层都自动跳过
+    const auctionOn = this.auctionEnabled && isIntraday && !this.isMultiDay;
     const chipsOn = this.chipsEnabled && !isIntraday;
 
     // 布局尺寸由 element 层读取 DOM 后以结构化 hints 传入，core 不再反向 querySelector
@@ -566,12 +707,12 @@ export class ChartContext {
     if (this.auctionPriceRect && this.auctionVolumeRect && this.openAuction.length) {
       const r = this.auctionPriceRect, v = this.auctionVolumeRect;
       segmentOverlay(this, parts, span, {
-        r, v, pts: this.openAuction, title: '集合竞价',
+        r, v, pts: this.openAuction, title: '',   // 竞价段顶部不再显示「集合竞价」标题
         // 9:25 去掉：与主图 9:30 起点标签相邻会重叠，时间轴在 9:30 处接续
         ticks: [
           { x: r.x + 4, text: '9:15' }, { x: r.x + r.w * 0.5 - 14, text: '9:20' },
         ],
-        hover: this.auctionHover, hoverTitle: '集合竞价', floatLeft: false,
+        hover: this.auctionHover, hoverTitle: '竞价', floatLeft: false,
         basePrice: this.dataset.manifest.preClose, pctLabel: '较昨收',
         phaseOf: (p) => (Number(p.time.slice(3, 5)) <= 19 ? '可撤单时段' : '不可撤单时段'),
       });

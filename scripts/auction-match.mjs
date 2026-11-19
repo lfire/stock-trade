@@ -49,8 +49,9 @@ export function matchAuction(bids, asks, refPrice) {
  * 注意：这是**示意数据生成**的简化（Level-2 委托簿无法回溯）；
  * matchAuction 本身支持任意多价位委托簿，三原则与并列处理由单元测试完整验证。
  */
+import { r2 } from './shared.mjs';
+
 export function makeOrderBook(center, buyQty, sellQty) {
-  const r2 = (v) => Math.round(v * 100) / 100;
   const p = r2(center);
   return {
     bids: buyQty > 0 ? [{ price: p, qty: Math.round(buyQty), side: 'buy' }] : [],

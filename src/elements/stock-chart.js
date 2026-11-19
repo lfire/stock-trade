@@ -6,6 +6,7 @@ import { loadDataset } from '../core/data-store.js';
 import { PALETTE, LAYOUT, resolveTheme } from '../types.js';
 import { chipSnapshotAt } from './chip-pane.js';
 import { adaptiveMAPeriods, parseMACDParams, resolveMACDParams, maParamsText, macdParamsText } from '../core/indicator-params.js';
+import { emitEvent, CHART_EVENTS } from '../events.js';
 
 const PANE_SELECTOR = 'price-pane, indicator-pane, chip-pane, auction-pane';
 /** 声明式 <ma-line> 未给 color 时依次取色板中的这三项，换主题时按同一组键刷新 */
@@ -29,7 +30,10 @@ const PANE_BARS_CSS = `
 `;
 
 export class StockChart extends HTMLElement {
-  static get observedAttributes() { return ['dataset', 'mode', 'symbol', 'auction', 'chips', 'theme', 'macd']; }
+  // symbol/height 不在观察列表：展示用名称由 dataset.manifest 提供，尺寸由 CSS 控制
+  static get observedAttributes() {
+    return ['dataset', 'mode', 'auction', 'chips', 'theme', 'macd', 'intraday-days', 'period', 'chip-mode'];
+  }
 
   constructor() {
     super();
@@ -130,8 +134,12 @@ export class StockChart extends HTMLElement {
       return;
     }
 
-    this.ctx.auctionEnabled = this.getAttribute('auction') !== 'off';
-    this.ctx.chipsEnabled = this.getAttribute('chips') !== 'off';
+    // 初始状态一次性经 configure() 写入（受控），不再逐个直接赋值 ctx 字段
+    this.ctx.configure({
+      auctionEnabled: this.getAttribute('auction') !== 'off',
+      chipsEnabled: this.getAttribute('chips') !== 'off',
+      mode: this.getAttribute('mode') === 'intraday' ? 'intraday' : 'candle',
+    });
     // 声明式均线配置：<price-pane><ma-line period="5" color="#F0A020">…</price-pane>
     const maNodes = [...this.querySelectorAll('ma-line')];
     if (maNodes.length) {
@@ -142,7 +150,7 @@ export class StockChart extends HTMLElement {
       this._defaultMA = maNodes
         .map((n, i) => ({ idx: i, key: keys[i % keys.length], explicit: !!n.getAttribute('color') }))
         .filter((x) => !x.explicit);
-      this.ctx.setMA(maNodes.map((n, i) => ({
+      this.ctx.setMovingAverages(maNodes.map((n, i) => ({
         period: Number(n.getAttribute('period')) || 5,
         color: n.getAttribute('color') || pal[keys[i % keys.length]],
       })));
@@ -153,8 +161,7 @@ export class StockChart extends HTMLElement {
     this.bindEvents();
     this.layout();
 
-    // 只设初始模式，不调用 setMode（数据尚未加载时它会读 dataset）
-    this.ctx.mode = this.getAttribute('mode') === 'intraday' ? 'intraday' : 'candle';
+    // 初始模式已在上方 configure() 中一并设置，不调用 setMode（数据尚未加载时它会读 dataset）
     this.ctx.emit('compute-mode-change', { mode: this.ctx.compute.mode, threads: 1, reason: 'js-fallback' });
     // 声明式主题优先；未声明时等 setDataset() 读取数据集 manifest 的配色声明
     const declaredTheme = this.getAttribute('theme');
@@ -162,12 +169,19 @@ export class StockChart extends HTMLElement {
     // 声明式 MACD 参数，如 macd="12,26,9"；未声明保持固定默认 (12,26,9)
     const declaredMACD = this.getAttribute('macd');
     if (declaredMACD) this.ctx.setMACDParams(parseMACDParams(declaredMACD));
+    // 声明式分时天数：数据到达后由 setDataset() 应用（此时仅记录偏好）
+    const declaredDays = this.getAttribute('intraday-days');
+    if (declaredDays) this.ctx.setIntradayDays(declaredDays);
+    const declaredPeriod = this.getAttribute('period');
+    if (declaredPeriod) this.ctx.setPeriod(declaredPeriod);
+    const declaredChipMode = this.getAttribute('chip-mode');
+    if (declaredChipMode) this.ctx.setChipMode(declaredChipMode);
 
     // 无 dataset 属性时不发起任何 fetch：作为 npm 包使用时由 setDataset() 注入内存数据，
     // 避免消费者目录下不存在 './src/data' 而报 404。示例页显式写了 dataset="./src/data"。
     const base = this.getAttribute('dataset');
     if (base) {
-      this.dispatchEvent(new CustomEvent('load-start', { detail: { base }, bubbles: true }));
+      emitEvent(this, CHART_EVENTS.LOAD_START, { base });
       loadDataset(base)
         .then((ds) => this.setDataset(ds))
         .catch((e) => this.showError(`数据加载失败：${e.message}（请通过 HTTP 访问，不要用 file:// 打开）`));
@@ -197,15 +211,18 @@ export class StockChart extends HTMLElement {
     if (name === 'auction') this.ctx.setAuctionEnabled(newV !== 'off');
     if (name === 'chips') this.ctx.setChipsEnabled(newV !== 'off');
     if (name === 'macd') { this.setMACDParams(newV || ''); return; }
+    if (name === 'intraday-days') { this.setIntradayDays(newV || 1); return; }
+    if (name === 'period') { this.setPeriod(newV || ''); return; }
+    if (name === 'chip-mode') { this.setChipMode(newV || 'histogram'); return; }
     if (name === 'dataset' && newV) {
-      this.dispatchEvent(new CustomEvent('load-start', { detail: { base: newV }, bubbles: true }));
+      emitEvent(this, CHART_EVENTS.LOAD_START, { base: newV });
       loadDataset(newV).then((ds) => this.setDataset(ds)).catch((e) => this.showError(e.message));
     }
   }
 
   showError(msg) {
     if (this.overlay) this.overlay.innerHTML = `<div style="padding:12px;color:var(--sc-up,${PALETTE.up});font:13px system-ui">${msg}</div>`;
-    this.dispatchEvent(new CustomEvent('chart-error', { detail: { message: msg }, bubbles: true }));
+    emitEvent(this, CHART_EVENTS.CHART_ERROR, { message: msg });
   }
 
   layout() {
@@ -328,6 +345,10 @@ export class StockChart extends HTMLElement {
     // 统一注入本次连接的 signal，断开时 abort 即解绑全部交互监听
     const add = (target, type, fn, opts) =>
       target.addEventListener(type, fn, { ...(opts || {}), signal: this._abort.signal });
+    // 盘口单位：子组件发 request，这里统一转成唯一的 depth-unit-change
+    add(this, CHART_EVENTS.DEPTH_UNIT_REQUEST, (e) => {
+      if (e.target !== this) this.setDepthUnit(e.detail?.unit);
+    });
     add(c, 'mousemove', (e) => {
       const rect = c.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -383,7 +404,7 @@ export class StockChart extends HTMLElement {
       : (typeof theme === 'string' ? (theme || 'light') : 'custom');
     // 实例级色板：不再就地覆盖全局 PALETTE，渲染帧内由 withPalette 临时生效
     const palette = { ...resolved };
-    if (this.ctx) this.ctx.palette = palette;
+    if (this.ctx) this.ctx.setPalette(palette);
     // CSS 变量只写到本实例 host（含 shadow DOM 的后代可继承），不再污染 :root / 其它实例
     const vars = {
       '--sc-bg': palette.background, '--sc-panel': palette.panel, '--sc-line': palette.grid,
@@ -400,9 +421,7 @@ export class StockChart extends HTMLElement {
     this.syncSideBars();
     this.refreshDefaultMAColors(palette);
     this.ctx?.requestRender();
-    this.dispatchEvent(new CustomEvent('theme-change', {
-      detail: { theme: this.theme, palette }, bubbles: true, composed: true,
-    }));
+    emitEvent(this, CHART_EVENTS.THEME_CHANGE, { theme: this.theme, palette });
     return palette;
   }
 
@@ -413,7 +432,7 @@ export class StockChart extends HTMLElement {
       const d = this._defaultMA.find((x) => x.idx === i);
       return d ? { ...m, color: palette[d.key] } : m;
     });
-    this.ctx.setMA(list);
+    this.ctx.setMovingAverages(list);
   }
 
   /** 当前主题名与实例色板快照 */
@@ -443,13 +462,8 @@ export class StockChart extends HTMLElement {
   /** 注入 L2 / 场景数据；setDataset 自动调用，也可单独更新 */
   setDetailData(data = {}) {
     this.detailData = { ...(this.detailData || {}), ...data };
-    if (this.ctx?.dataset && data.depthFull !== undefined) {
-      this.ctx.dataset.depthFull = data.depthFull;
-      this.ctx.requestRender();
-    }
-    this.dispatchEvent(new CustomEvent('detail-data-change', {
-      detail: { ...this.detailData }, bubbles: true, composed: true,
-    }));
+    if (data.depthFull !== undefined) this.ctx?.setDepthFull(data.depthFull);
+    emitEvent(this, CHART_EVENTS.DETAIL_DATA_CHANGE, { ...this.detailData });
   }
 
   /** 切换盘口场景：组件内部改数据并重绘，页面只消费结构化事件 */
@@ -459,20 +473,14 @@ export class StockChart extends HTMLElement {
     // 无对应场景时回退到数据集默认盘口 / 全景，保证页面侧栏总有数据
     const depth = sc?.depth ?? this.detailData?.depth ?? null;
     const pano = sc?.pano ?? this.detailData?.depthFull ?? null;
-    if (this.ctx?.dataset) {
-      this.ctx.dataset.depthFull = pano;
-      this.ctx.requestRender();
-    }
-    this.dispatchEvent(new CustomEvent('depth-scenario-change', {
-      detail: { key, depth, pano }, bubbles: true, composed: true,
-    }));
+    this.ctx?.setDepthFull(pano);
+    emitEvent(this, CHART_EVENTS.DEPTH_SCENARIO_CHANGE, { key, depth, pano });
   }
 
   setDepthUnit(unit) {
     this.depthUnit = unit === 'amount' ? 'amount' : 'volume';
-    this.dispatchEvent(new CustomEvent('depth-unit-change', {
-      detail: { unit: this.depthUnit }, bubbles: true, composed: true,
-    }));
+    // 根容器是 depth-unit-change 的唯一派发源；子组件只发 request，避免同一操作双派发
+    emitEvent(this, CHART_EVENTS.DEPTH_UNIT_CHANGE, { unit: this.depthUnit });
   }
 
   /** 编程式交互（URL 参数 / 外部自动化），不再暴露 ctx */
@@ -562,7 +570,7 @@ export class StockChart extends HTMLElement {
   setDataset(dataset) {
     // 归一化：支持只注入部分分片（如 setDataset({ bars })），缺失字段给安全空值
     const ds = {
-      manifest: {}, bars: [], intraday: [], chips: [], auction: [], trades: [],
+      manifest: {}, bars: [], intraday: [], intradayMulti: [], chips: [], auction: [], trades: [],
       depth: [], orders: [], depthFull: null, depthScenarios: {},
       ...(dataset || {}),
     };
@@ -583,7 +591,7 @@ export class StockChart extends HTMLElement {
     this.setDepthScenario(this.depthScenario);   // 数据就绪后应用（含 URL 预设的场景）
     this.renderChipStats();
     this.updateSide(this.ctx.sideRect);
-    this.dispatchEvent(new CustomEvent('dataset-ready', { detail: { dataset: ds }, bubbles: true, composed: true }));
+    emitEvent(this, CHART_EVENTS.DATASET_READY, { dataset: ds });
   }
   setMode(mode) { this.ctx.setMode(mode); }
   setPeriod(period) { this.ctx.setPeriod(period); }
@@ -599,6 +607,9 @@ export class StockChart extends HTMLElement {
    * 设置 MACD 参数：支持 {fast,slow,signal} 对象或 '12,26,9' 字符串；
    * 非法输入回退固定默认 (12,26,9)。变更会触发 macd-params-change 并重绘。
    */
+  /** 切换分时天数（1 单日 / 2–5 多日）；多日场景自动隐藏集合竞价段 */
+  setIntradayDays(days) { return this.ctx.setIntradayDays(days); }
+  getIntradayDays() { return this.ctx.getIntradayDays(); }
   setMACDParams(input) {
     const patch = typeof input === 'string' ? parseMACDParams(input) : (input || {});
     const resolved = this.ctx ? this.ctx.setMACDParams(patch) : resolveMACDParams(patch);
@@ -609,17 +620,18 @@ export class StockChart extends HTMLElement {
     return this.ctx ? this.ctx.getMACDParams() : resolveMACDParams();
   }
   getMovingAverages() { return this.ctx.maConfig.map((m) => ({ ...m })); }
-  setMovingAverages(list) { return this.ctx.setMA(list); }
+  setMovingAverages(list) { return this.ctx.setMovingAverages(list); }
   addMovingAverage(cfg) { return this.ctx.addMA(cfg); }
   removeMovingAverage(period) { return this.ctx.removeMA(period); }
   updateMovingAverage(period, patch) { return this.ctx.updateMA(period, patch); }
-  setViewport({ start, end }) {
-    this.ctx.viewport = { start, end };
-    this.ctx.emit('viewport-change', { start, end });
-    this.ctx.requestRender();
-  }
+  /** 视口写入转调 ChartContext 的受控 setter（钳制 / emit / 重绘都在 core 内完成） */
+  setViewport({ start, end }) { this.ctx.setViewport({ start, end }); }
   getComputeMode() { return this.ctx?.compute.mode || 'none'; }
-  getContext() { return this.ctx; }
+  /**
+   * @deprecated 仅返回只读门面，不暴露可变的 ChartContext；需要改状态请用公开方法。
+   * 下个主版本可能移除，请改用 <stock-chart> 的公开 API 与事件。
+   */
+  getContext() { return this.ctx ? this.ctx.readonlyFacade() : null; }
   destroy() { this.disconnectedCallback(); }
 }
 

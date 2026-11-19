@@ -17,8 +17,9 @@ export {
   StockChart, PricePane, IndicatorPane, ChipPane, AuctionPane, TradeTape, DepthBook,
 };
 export { SUBPLOT_INDICATORS } from './elements/stock-chart.js';
-export { PALETTE, THEMES, LAYOUT, resolveTheme, applyPalette, resetPalette, withPalette } from './types.js';
+export { PALETTE, THEMES, LAYOUT, resolveTheme, createPalette, applyPalette, resetPalette, withPalette } from './types.js';
 export { bindStockChart } from './frameworks/react.js';
+export { CHART_EVENTS, emitEvent } from './events.js';
 export * from './pure.js';
 
 const ELEMENTS = {

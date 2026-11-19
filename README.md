@@ -35,7 +35,7 @@ src/
     intraday_20261113.json         267 点真实分时（累计量额已差分为增量）
     chips_20261113.json            150 档筹码直方图 + 120 日 9 项统计
     auction_20261113.json          90 点竞价（开盘 69 + 尾盘 21，9 秒节点，phase 区分）
-    trades_20261113.json           494 条逐笔明细
+    trades_20261113.json           507 条逐笔明细
     depth_20261113.json            十档快照
     raw/                           抓取到的原始响应，便于复核字段与单位
   compute/
@@ -69,14 +69,14 @@ docs/                              01 数据格式 / 02 扩展数据 / 03 架构
 
 | 数据 | 来源 | 说明 |
 |---|---|---|
-| 日 K 935 根 | 东方财富 `push2his` kline | 真实，前复权；剔除 2026-11-16 当日未完成 K 线，固定到 2026-11-13 |
+| 日 K 935 根 | 东方财富 `push2his` kline | 真实，前复权；剔除 2026-11-13 之后未完成的 K 线，固定到 2026-11-13 |
 | 分时 267 点 | 腾讯 `minute/query` | 真实完整交易日；累计量额已差分为每分钟增量 |
 | 筹码 150 档 | **自行计算** | 基于真实日 K + 换手率，三角形成本分布算法（公开 cyq 接口空响应） |
 | 集合竞价 **69 点 · 尾盘竞价 21 点 / 9 秒** | **mock（锚定真实）** | 历史竞价虚拟撮合快照属 L2、免费接口无法回溯；同一文件用 `phase` 区分 `open`(9:15–9:25) / `close`(14:57–15:00)，均锚定真实值拟真生成：开盘末点 = 真实 9:25 开盘价/量额，尾盘末点 = 真实 15:00 收盘价/量额（见下方说明） |
-| 逐笔明细 506 条 | **mock + 真实片段留档** | 真实接口只给当日 3 秒合并分笔片段；主数据按同结构确定性生成 |
+| 逐笔明细 507 条 | **mock + 真实片段留档** | 真实接口只给当日 3 秒合并分笔片段；主数据按同结构确定性生成 |
 | 十档盘口 | **mock** | 公开盘口接口空响应，按收盘价上下各 10 档生成 |
-| 全部挂单 1344 条 | **mock（Level-2）** | 公开接口无逐笔委托（抓取复核见 `src/data/raw/em_order_attempt.json`）；按分时市价轨迹 + 收盘十档快照闭合确定性生成；含 `NEW / FILL / CANCEL` 完整委托生命周期（部分成交后按剩余量撤单），详见 `src/data/SOURCES.md` |
-| 全景盘口 买 59 / 卖 56 档 | **回放计算（真实 L2 做法）** | 由逐笔委托流重建完整委托簿（NEW 入簿 / CANCEL 出簿 / 被市价穿越即成交离场），未撤单远档一直留存，买档覆盖至跌停 1269.24、卖档覆盖至涨停 1551.30，前十档与十档快照闭合 |
+| 全部挂单 1377 条 | **mock（Level-2）** | 公开接口无逐笔委托（抓取复核见 `src/data/raw/em_order_attempt.json`）；按分时市价轨迹 + 收盘十档快照闭合确定性生成；含 `NEW / FILL / CANCEL` 完整委托生命周期（部分成交后按剩余量撤单），详见 `src/data/SOURCES.md` |
+| 全景盘口 买 53 / 卖 33 档 | **回放计算（真实 L2 做法）** | 由逐笔委托流重建完整委托簿（NEW 入簿 / CANCEL 出簿 / 被市价穿越即成交离场），未撤单远档一直留存，买档覆盖至跌停 1269.24、卖档覆盖至涨停 1551.30，前十档与十档快照闭合 |
 | 盘口场景 3 组 | **mock** | 普通 / 涨停 / 跌停三组十档快照与对应全景盘口；涨停无卖盘、买1 为涨停价封单，跌停反之 |
 
 所有 mock 使用固定种子 `mulberry32(20261113)`，重复运行输出一致。详见 `src/data/SOURCES.md`。
@@ -145,7 +145,7 @@ defineAll();          // 注册全部 7 个标签；也可传自定义 registry 
 | 筹码峰 | 右列 | **上段占满主图区高度**：150 档横向柱（与主图共享价格轴）；**下段占副图区高度**：DOM 统计面板（获利比例、平均成本、居中成本、90%/70% 成本区间与集中度），采用分区布局 —— 标题行加粗 + 右侧日期、获利比例红色大字 + 占比进度条、90%/70% 成本分布各成一组（区间 / 集中度两列右对齐 + 等宽数字）。**平均成本** = `Σ(价格档 × 筹码占比) / Σ占比`（`weightedAvgCost`，按 150 档直方图加权），与**居中成本**（`avgCost`，50% 分位中位数）是两个不同口径，面板分别展示；两者都逐日存于 `chips.stats`，随光标联动。**随 K 线光标按交易日联动**：`chipSnapshotAt()` 取该日的 `histograms` / `stats`（数据覆盖 120 日逐日快照），直方图按该日收盘价分色、标题与统计面板标注实际日期；**加权平均成本位置线**按同一价格轴绘制，与统计面板的「平均成本」同源联动；样式取中性深灰 `#5B6472` 细虚线（13px 步长），左端贴筹码柱起点 `r.x+4`、右端延伸到筹码峰画布边沿 `r.x+r.w`（不越出 rect，也不留右侧空白）。**直方图模式图上不放任何标签**（不再有「筹码峰 · 150 档 · 日期」标题条与「均成本」浮标），日期与数值统一由右侧 DOM 统计面板承载；hover 到窗口外更早的 K 线时回退到窗口内最近一日并标注该日期 |
 | 十档盘口 | 右列（分时模式） | DOM 侧栏占满右列全高 |
 
-- **操作区分组**：页面顶部「数据演示」条只放切换示例数据的控件（`盘口场景`、`盘口单位`），明确标注非真实行情功能；图表功能条集成在图表卡片内部顶部（与绘图区同一张卡片、共用边框圆角）。**功能按图分工、各自管理**：`分时` / `K线` 模式切换与 `副图数量` 两种模式共用；**分时专属** `集合竞价(开盘+尾盘)`，**K 线专属** `周期` / `筹码峰` / `均线设置`（含均线面板），各自成组，切到相应图才整组展示，**不再把不适用的控件置灰**。`syncToggles()` 用 `hidden` 切换两组容器。**默认展示分时图**（`<stock-chart mode="intraday">`），`?mode=candle` 可切回 K 线。
+- **操作区分组**：页面顶部「数据演示」条只放切换示例数据的控件（`盘口场景`、`盘口单位`），明确标注非真实行情功能；图表功能条集成在图表卡片内部顶部（与绘图区同一张卡片、共用边框圆角）。**功能按图分工、各自管理**：`分时` / `K线` 模式切换与 `副图数量` 两种模式共用；**分时专属** `多日` 分段控件与 `竞价` 开关（开盘+尾盘），**K 线专属** `周期` / `筹码峰` / `均线设置`（含均线面板），各自成组，切到相应图才整组展示，**不再把不适用的控件置灰**。`syncToggles()` 用 `hidden` 切换两组容器。**默认展示分时图**（`<stock-chart mode="intraday">`），`?mode=candle` 可切回 K 线。
 - **显示规则**：集合竞价只在主图为分时图时出现；筹码峰只在主图为 K 线图时出现；十档盘口只在分时模式出现。竞价与筹码峰都**支持开启/关闭**（工具栏按钮，或 `setAuctionEnabled()` / `setChipsEnabled()`，或 `<stock-chart auction="off" chips="off">`）。关闭后对应列宽度归零，主图区自动扩展。
 - **高度分配**：示例页画布 600px，主图占 50%（`mainH = height * 0.5`），副图区 50%；每个副图上方先扣 18px 信息栏，其余为绘图区，三个副图等分权重 `height="12"`（3 个副图时每个绘图区约 82px）。
 - **副图数量**：`setSubplotCount(n)` 或工具栏「副图数量」；隐藏全部时强制保留第一个，保证至少一个。
@@ -194,7 +194,7 @@ defineAll();          // 注册全部 7 个标签；也可传自定义 registry 
 - 表格四列 **时间 / 价格 / 成交量 / 方向**（紧凑列宽 `62px 1fr 1fr 30px`、11px 字号）；`ResizeObserver` 按宿主尺寸重建虚拟滚动视口并保留滚动位置。`?tape-side=1` 直接进入一级展开，`?tape-zoom=1` 直接打开多组逐笔视图（均仅分时模式生效）。
 - **逐笔涨跌着色**：`bindDataset()` 以相邻两笔成交价比较（首行对 `preClose`，容差 `1e-6`）算出 `trend`（涨 1 / 跌 -1 / 平 0），整行时间、价格、成交量文字与方向标签按 A 股习惯**涨红跌绿**、平盘中性灰着色，价格列加粗；隔行极淡底与十字光标选中高亮保留。
 - **侧栏视觉统一**：`sideSlot` 用 1px `#E3E6EB` 左边界 + 轻微阴影与图表分区；十档与明细标题条统一 `#F7F8FA` 底 + 深色细线，表头白底细线；明细行去掉逐行硬边框，改隔行极淡底（`#FAFBFC`）+ hover 高亮，方向 B/S/N 用浅红 / 浅绿 / 浅灰圆角标签；底部「查看逐笔明细」做成圆角按钮。1 档收缩态用细分隔线代替整行「买卖分界」文字，十档固定 66px。
-- **全部挂单（Level-2）**：由覆盖层顶部「逐笔成交 / 全部挂单 / 全景盘口」切换进入（十档盘口标题条右侧的入口已改为「全景盘口 ›」），与逐笔成交共用连续时间线多栏视图。挂单模式为 5 列 `时间 / 委托价 / 数量 / 剩余 / 类型`（`trade-tape.setViewConfig()` 可配列模板与额外列），标签 `B / S / BF / SF / BC / SC`（买 / 卖 / 买成交 / 卖成交 / 买撤 / 卖撤），成交标签加细边框区分，撤单按方向红系/绿系着色。`?tape-zoom=1&tape-set=orders` 可直接打开挂单视图。数据契约见 `manifest.json → files.orders`，生成脚本 `scripts/build-order-book.mjs`。
+- **全部挂单（Level-2）**：由覆盖层顶部「逐笔明细 / 全部挂单 / 全景盘口」切换进入（十档盘口标题条右侧的入口已改为「全景盘口 ›」），与逐笔明细共用连续时间线多栏视图。挂单模式为 5 列 `时间 / 委托价 / 数量 / 剩余 / 类型`（`trade-tape.setViewConfig()` 可配列模板与额外列），标签 `B / S / BF / SF / BC / SC`（买 / 卖 / 买成交 / 卖成交 / 买撤 / 卖撤），成交标签加细边框区分，撤单按方向红系/绿系着色。`?tape-zoom=1&tape-set=orders` 可直接打开挂单视图。数据契约见 `manifest.json → files.orders`，生成脚本 `scripts/build-order-book.mjs`。
 - **委托生命周期（真实口径）**：一张委托 `NEW` 入簿后，`FILL` 按成交量扣减剩余在挂量，`CANCEL` 撤的是**当时的剩余量**而非原委托量（例如委托 2000 手 → 成交 1200 手 → 撤单 800 手）。事件带 `origOrdId / origVolume / remainVolume / tradeId`，`volume` 语义随事件变化；合并分笔 `trades` 新增 `ordIds`（该分钟内参与成交的委托号）形成可追溯关联。委托簿回放按剩余量聚合，`verify.mjs` 校验 `NEW − ΣFILL − ΣCANCEL = 剩余` 守恒。
 - **全景盘口（与「全部挂单」平行的第三个视角）**：真实 Level-2 里全景盘口不是独立数据，而是行情商用**逐笔委托消息重建完整委托簿（order book）**后按价格聚合的当前状态；本例严格由「全部挂单」事件流回放得到（撤单按 `cancelOf` 出簿、被市价穿越才成交离场，**未撤单的远档会一直留存**），因此买单覆盖现价 → 跌停 1269.24、卖单覆盖现价 → 涨停 1551.30，并含涨跌停边界埋伏单。视图分左右两块（左买单降序红系 / 右卖单升序绿系），每块 `档位 / 委托价 / 挂单量 / 笔数`，带挂单量占比色条、前十档加粗、边界档高亮、中间价浮标与价格区间摘要，档位多时各自滚动（滚动条隐藏）。数据契约 `manifest.json → files.depthFull`，前十档与十档快照闭合。`?tape-zoom=1&tape-set=panorama` 可直接打开，十档盘口标题条右侧的「全景盘口 ›」入口也直接跳转到本视图；「全部挂单」时间线视图保持原样。
 - **全景盘口实时统计**：两侧统计条不写死在数据里，而是渲染时按当前 `bids/asks` 实时累加 —— 卖单「拉至涨停」与买单「砸至跌停」分别给出 `Σvolume` 成交量、`Σ(price×volume)` 消耗金额、`ΣorderCount` 委托笔数及到涨跌停的涨跌幅。现价改为独立居中条（`pano-mid`），顶部栏统计也居中，不再有浮标遮挡内容。
@@ -232,6 +232,14 @@ defineAll();          // 注册全部 7 个标签；也可传自定义 registry 
 - **涨跌停样式只属于日 K**：`limitState`（涨停 / 跌停 / 涨停炸板 / 跌停炸板）是日线级别状态，聚合到周 / 月 / 季 / 年或分钟周期时不继承（`mergeBars` 输出空值），主图四色图例只在 `period === '1d'` 显示；其他周期蜡烛一律按普通红涨绿跌渲染、不加粗，hover 明细也不带状态标签。
 - **数据边界**：示例只含 935 根日 K + 当日 267 个分时点，分钟级周期仅有当日约 48 / 8 / 4 / 2 根，历史深度有限；周 / 月 / 季 / 年分别约 187 / 45 / 15 / 4 根。
 
+### 多日分时
+
+- 数据契约：`manifest.files.intradayMulti = 'intraday_5d.json'`，文件是**扁平数组、每点带 `tradeDate`**，5 个交易日 × 242 点（末日取真实分时并截到 15:00，前 4 日按当日日 K 的 OHLC 以固定种子确定性拟真生成）。`manifest.tradeDates` / `preCloseByDate` 提供各日昨收。单日 `files.intraday` 保持不变，兼容原有 267 点数据。
+- 组件 API：`chart.setIntradayDays(1..5)` / `getIntradayDays()`、HTML 属性 `intraday-days="3"`、事件 `intraday-days-change`。**界面入口**是图表工具栏「多日」后面的一组 tab 式分段按钮 `1 日 / 2 日 / 3 日 / 4 日 / 5 日`（点击即时切换、当前天数高亮），比下拉更直观；也支持 `?intraday-days=3`。默认 1 日，主图标题在多日时显示「多日分时 · N 日」。
+- 渲染：`getSeries()` 逐点过滤盘后点（不能用 `findIndex` 截断，否则第一天盘后点会丢掉后续交易日）；`halfHourMarks()` 按 `tradeDate` 分日生成刻度并标记 `dayStart`，多日时时间轴只标日期（MM/DD）、画日界竖线，价格线与均价线在日界处**断开**，不画跨日垂直连线。价格轴与涨跌幅统一以**首日昨收**为基准；头部的日期与「高/低」按光标所在交易日取值。
+- **多日场景隐藏竞价**：`ChartContext.isMultiDay` 为真时清空 `openAuction` / `closeAuction`，`applyLayout()` 不再分配竞价列（`auctionOn = ... && !isMultiDay`），`closingW = 0` 让主图铺满；几何、hover、浮层因 rect 为 `null` 自动跳过。页面上竞价开关**不直接隐藏**，而是置为禁用并显示「多日不展示竞价」，让用户知道竞价为何消失；切回 1 日完整恢复。
+- 分时量比曲线按 `tradeDate` 在日界处把累计成交量归零，每个交易日各自从 09:30 起算。
+
 ### 十字光标坐标轴定位（以鼠标为中心）
 
 `mousemove` 同时记录 `crosshair`（吸附到数据索引）与 `pointer = {x, y}`（精确像素位置）。鼠标划过时：
@@ -268,7 +276,7 @@ defineAll();          // 注册全部 7 个标签；也可传自定义 registry 
 
 `Bar.limitState` 标注四种特殊状态，蜡烛按状态着色（不适用普通红涨绿跌），并略微加宽以便识别：
 
-| 状态 | 颜色 | 判定（沪市主板 600519 非 ST，10% 限制，复权误差取 0.5% 容差） |
+| 状态 | 颜色 | 判定（按代码/名称识别比例，本例沪市主板 10%；涨跌停价四舍五入到分，容差固定 0.011 元） |
 |---|---|---|
 | `limitUp` 涨停 | 深红 `#C62828` | 收盘价 = 涨停价 |
 | `limitDown` 跌停 | 深绿 `#087A55` | 收盘价 = 跌停价 |
@@ -292,7 +300,7 @@ defineAll();          // 注册全部 7 个标签；也可传自定义 registry 
 
 **能抓到什么**：9:15–9:25 的虚拟撮合快照（虚拟参考价 / 虚拟匹配量 / 买卖虚拟未匹配量）属于交易所 Level-2 行情。公开资料与实测一致：AkShare（9:15 抛 `ValueError`）、Tushare（价格字段空到 9:30）、Baostock（无实时路径）、聚宽 / 米筐（分钟线从 9:30 起）、券商 Level-1 封装（虚拟字段被过滤）在竞价窗口都没有完整数据；机构 L2 有但需权限。**当日**可通过 AKShare MCP `get_stock_auction_tool`（9:15–9:25 虚拟撮合过程，仅当日可拉，首次查询落盘 CSV 归档）或通达信协议 `get_call_auction`（`0x056a` 当前交易日竞价明细）获取后自行归档，历史日期只能读自己的归档。本项目使用固定历史交易日 `2026-11-13`，无法回溯当时快照。
 
-**能拿到的真实部分**：9:25 统一撮合结果（开盘价、竞价成交量 / 额）存在于公开日 K、1 分钟 K 首根、逐笔成交明细；本项目分时 `09:30` 首点的 `volume / amount` 即 9:25 竞价成交量额。
+**能拿到的真实部分**：9:25 统一撮合结果（开盘价、竞价成交量 / 额）存在于公开日 K、1 分钟 K 首根、逐笔明细；本项目分时 `09:30` 首点的 `volume / amount` 即 9:25 竞价成交量额。
 
 **因此采取「锚定真实 + 拟真生成」**（`scripts/build-sample-data.mjs` 的 `buildAuction()`）：
 
@@ -329,8 +337,10 @@ P1：分时模式副图口径统一、Worker + 列式二进制、双构建特性
 P2/P3：L2 双来源适配、资金流副图；（筹码峰历史回放已实现，见「三列两行网格」表格）
 P4：Rust/WASM 接入、多线程压测与降级路径验证。
 
-**MACD 参数**：`adaptiveMACDParams()` 不再随 K 线根数分档，固定返回通达信/同花顺默认 `(12,26,9)`（保留旧函数名兼容；`count` 参数忽略）。参数支持三层配置：纯函数层 `resolveMACDParams({fast,slow,signal})` / `parseMACDParams('12,26,9')`（非法值回退默认）；组件层 `chart.setMACDParams(obj|string)` / `getMACDParams()`、HTML 属性 `macd="12,26,9"`、事件 `macd-params-change`；示例页 `?macd=12,26,9`。短历史序列预热不足时 MACD 按通达信语义留空（信息栏显示 `—`），需要显示可显式配更小参数。`ChartContext.macdParams` 是唯一真源，副图与信息栏都从它读取。
+**MACD 参数**：固定默认通达信/同花顺 `(12,26,9)`，不随 K 线根数分档；旧兼容包装 `adaptiveMACDParams()` 已于 2026-11-19 P2 移除，统一用 `resolveMACDParams()` / `parseMACDParams()`。参数支持三层配置：纯函数层 `resolveMACDParams({fast,slow,signal})` / `parseMACDParams('12,26,9')`（非法值回退默认）；组件层 `chart.setMACDParams(obj|string)` / `getMACDParams()`、HTML 属性 `macd="12,26,9"`、事件 `macd-params-change`；示例页 `?macd=12,26,9`。短历史序列预热不足时 MACD 按通达信语义留空（信息栏显示 `—`），需要显示可显式配更小参数。`ChartContext.macdParams` 是唯一真源，副图与信息栏都从它读取。
 
 **算法口径（2026-11-19 核验并修复 P0）**：`EMA` 采用通达信/同花顺口径（前 N 个值取简单平均作首个 EMA，前 N−1 根为 `null`），`MACD` 的 DEA 只在 DIF 有效段上递推、柱仍为 `2×(DIF−DEA)`；`KDJ` 与通达信 `SMA(X,3,1)` 递推一致。量比拆成两套：日线 `volumeRatio()` = 当日量 ÷ 前 5 日平均日量（K 线面板标注「日量比」），分时 `intradayVolumeRatio()` = (当日累计量 ÷ 当日累计开市分钟) ÷ (前 5 日平均日量 ÷ 240)，按上午 9:30–11:30 / 下午 13:00–15:00 共 240 分钟并扣午休。分钟 K 由 `intradayBucket()` 按交易时段边界分桶，11:30 / 15:00 收盘点归入所在时段最后一根，不再跨午休成根。`scripts/tests/algorithm-regression.test.mjs` 用独立基准双实现逐根比对（EMA/MACD/KDJ/量比/分钟 K），详见 `docs/algorithm-audit.html`。**P1 已完成（2026-11-19）**：筹码三角分布峰值改当日成交均价（成交额/成交量，一字板回退四价均价），分布形状 / 历史换手衰减系数 / 分桶精度 / 回看天数可通过 `npm run data -- --chips-shape=uniform --chips-decay=2 --chips-bins=200` 配置；UI「平均成本」对齐软件面板的 `COST(50)`、加权平均另列、集中度标注「面板口径」（`(高−低)/(高+低)`，非通达信 SCR 的再除 2 版本）。涨跌停比例由代码/名称识别板块（主板 10% / 创业科创 20% / 主板 ST 5% / 北交所 30%），涨跌停价四舍五入到分、判定容差固定 0.011 元，清除了 0.5% 相对容差的误标。集合竞价虚拟价 / 匹配量 / 未匹配量 / 方向改由 `scripts/auction-match.mjs` 按上交所《交易规则》3.5.2 三原则撮合生成，末点仍与真实开盘/收盘价及成交量闭合。`scripts/verify.mjs` 的涨跌停校验改用 manifest 比例 + 独立容差，并加入 MACD/KDJ/量比的预置期望值断言，替换循环论证；新增 `scripts/tests/p1-algorithm.test.mjs`（撮合三原则、板块比例、筹码口径）。
+
+**架构与数据契约规范化（2026-11-19 全量审计）**：详见 `docs/architecture-audit.html`。本轮落地四组修复 —— ① 出入参契约：修正 `index.d.ts` 14 处类型不符、移除无行为属性、补 `period` / `chip-mode` 属性与 React 的 `macd` / `intradayDays` 映射、补参数防御与只读返回值（`setMovingAverages()` 返回拷贝 / `rgba` 冻结缓存）、`data-store` 缺失分片真正跳过；② 数据可获得性：`manifest.provenance` 覆盖 10 个数据集并标注 Level-2 授权边界，数据体补 `source` / `license` / `requiresAuthorization` / `priceBasis`，UI 增加「示意撮合」「前 N 日为拟真数据」提示，`SOURCES.md` 覆盖 orders/depthFull/depthScenarios；③ 模块化：新增 `src/core/market-constants.js` 作为 A 股业务常量单一真源（0.01 / ×100 / 240 分钟 / 时段 / 半小时刻度），涨跌停 0.9/1.1 硬编码改按 `manifest.limitRate` 计算；④ 工程链：`npm run data` 两步生成、`typecheck` 纳入 `react.d.ts`、新增 `scripts/tests/contract-runtime.test.mjs`（运行时契约回归）。`npm test` 45/45 全过。**P0 两项随后完成（2026-11-19）**：① `getContext()` 改为返回 `ChartContext.readonlyFacade()` 只读门面（`Object.freeze` + Proxy set/delete 陷阱、状态 getter 浅拷贝、不暴露内部方法），`index.d.ts` 新增精确的 `ChartContextFacade` 接口；② 组件层 9 处绕过 setter 的直接写全部收口到 ChartContext 的受控 setter `configure()` / `setPalette()` / `setPriceScale()` / `setDepthFull()` / `setViewport()`，静态核查组件层直接写 ctx 为 0 处，并修正初始 mode 在 `layout()` 之后才设置的时序。新增 `scripts/tests/p0-controlled-state.test.mjs`（7 个测试），`npm test` **52/52**，6 场景截图像素级无视觉回归。**P1 四组 + P2 两组随后一次性完成（2026-11-19）**：① 数据重跑可复现 —— 抓取脚本统一规范名 `hist_intraday.json`（同时写别名 `tx_minute.json`），生成脚本建立「规范名 → 兼容名 → `src/data/raw` 归档副本」三级回退并校验分钟点非空；② 事件契约 —— 新建 `src/events.js`（`CHART_EVENTS` 冻结表 + `emitEvent()` 统一 bubbles/composed），全仓 `new CustomEvent` 只剩一处，盘口单位改 `depth-unit-request` → 根容器唯一派发 `depth-unit-change`；③ `exports` 补 `./vue` / `./events` / `./core/*` / `./gl/*` / `./compute/*` 并消除 `.js.js` 陷阱，新增无运行时依赖的 `vStockChart` 指令；④ 新建 `scripts/shared.mjs` 收口 `r2/r6/mulberry32`、常量模块补 `AUCTION_STEP_SEC/TIME`，`getSeries()` 读 `manifest.session`、复权标签读 `manifest.adjust`；⑤ `generatedAt` 支持 `SOURCE_DATE_EPOCH`、`floatShares` 改读 `instrument.json`（含来源）；⑥ 删除 `adaptiveMACDParams` / `CLEAR`，均线写入统一 `setMovingAverages()`，新增纯函数 `createPalette()` 并把 `applyPalette/resetPalette` 标 deprecated。新增 `scripts/tests/p1p2-architecture.test.mjs`（11 个测试）与 `pretest` 构建顺序保证，`npm test` **63/63**，8 场景截图 0 JS 错误。审计报告 8 组问题**全部完成**，详见 `docs/architecture-audit.html`。
 
 > 本项目为前端组件工程示例，示例标的仅用于验证数据结构与渲染，不构成投资建议。

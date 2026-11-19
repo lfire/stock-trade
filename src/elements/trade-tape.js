@@ -1,5 +1,6 @@
 // 交易明细：DOM 虚拟滚动表格，与 crosshair 联动。B/S/N 着色，显式标注来源与粒度。
 import { PALETTE, LAYOUT } from '../types.js';
+import { emitEvent, CHART_EVENTS } from '../events.js';
 
 export class TradeTape extends HTMLElement {
   constructor() {
@@ -165,7 +166,7 @@ export class TradeTape extends HTMLElement {
       this.paint();
       if (this._suppressBroadcast) { this._suppressBroadcast = false; return; }
       // 供多组视图把所有栏同步到同一滚动位置，保持时间衔接
-      this.dispatchEvent(new CustomEvent('tape-scroll', { detail: { top: this.view.scrollTop } }));
+      emitEvent(this, CHART_EVENTS.TAPE_SCROLL, { top: this.view.scrollTop });
     });
     this.view = view;
     this.view.scrollTop = keepScroll;

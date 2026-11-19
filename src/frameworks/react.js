@@ -21,6 +21,8 @@ export function bindStockChart(el, options = {}) {
     chips: (v) => el.setChipsEnabled?.(v !== 'off' && v !== false),
     subplots: (v) => el.setSubplotCount?.(Number(v)),
     movingAverages: (v) => el.setMovingAverages?.(v),
+    macd: (v) => el.setMACDParams?.(v),
+    intradayDays: (v) => el.setIntradayDays?.(v),
     viewport: (v) => el.setViewport?.(v),
     crosshair: (v) => el.setCrosshair?.(v),
   };

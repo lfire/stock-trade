@@ -70,7 +70,7 @@ export function elapsedMarketMinutes(time: string): number;
 export function intradayVolumeRatio(points: readonly Record<string, unknown>[],
   avg5DailyVolume: number, atTime?: string): number;
 export function intradayVolumeRatioSeries(points: readonly Record<string, unknown>[],
-  avg5DailyVolume: number): Array<{ time: string; value: number }>;
+  avg5DailyVolume: number): Array<{ time: string; tradeDate: string | null; value: number }>;
 export function computeIndicator(name: string, bars: readonly BarLike[],
   params?: Record<string, unknown>): IndicatorResult;
 
@@ -95,7 +95,24 @@ export const DEFAULT_MACD_PARAMS: Readonly<MACDParams>;
 export function resolveMACDParams(config?: Partial<MACDParams>): MACDParams;
 /** 解析 '12,26,9' / '12 26 9' 或对象；非法输入回退默认 */
 export function parseMACDParams(input: string | Partial<MACDParams> | null | undefined): MACDParams;
-/** 兼容旧调用：count 不再参与计算，config 可覆盖固定默认值 */
-export function adaptiveMACDParams(count: number, config?: Partial<MACDParams>): MACDParams;
 export function maParamsText(periods: readonly number[]): string;
 export function macdParamsText(p: MACDParams): string;
+
+// ---- core/market-constants（A 股业务常量单一真源） ----
+export const PRICE_TICK: number;
+export const PRICE_EPS: number;
+export const LOT_SIZE: number;
+export const AM_START: number;
+export const AM_END: number;
+export const PM_START: number;
+export const PM_END: number;
+export const SESSION_MINUTES: number;
+export const DAY_MINUTES: number;
+export const AUCTION_OPEN: Readonly<{ start: string; end: string; seconds: number }>;
+export const AUCTION_CLOSE: Readonly<{ start: string; end: string; seconds: number }>;
+export const NO_CANCEL_FROM: string;
+export const AUCTION_STEP_SEC: number;
+export const TIME: Readonly<Record<string, string>>;
+export const HALF_HOUR_MARKS: readonly string[];
+export const SESSION: readonly { open: string; close: string }[];
+export const AFTER_HOURS: Readonly<{ open: string; close: string }>;
