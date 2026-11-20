@@ -34,12 +34,16 @@
       "types": "./dist/events.d.ts",
       "default": "./dist/events.js"
     },
-    "./core/*": "./dist/core/*",
-    "./gl/*": "./dist/gl/*",
-    "./compute/*": "./dist/compute/*",
-    "./frameworks/*": "./dist/frameworks/*",
+    "./core/*.js": "./dist/core/*.js",
+    "./core/*": "./dist/core/*.js",
+    "./gl/*.js": "./dist/gl/*.js",
+    "./gl/*": "./dist/gl/*.js",
+    "./compute/*.js": "./dist/compute/*.js",
+    "./compute/*": "./dist/compute/*.js",
+    "./frameworks/*.js": "./dist/frameworks/*.js",
+    "./frameworks/*": "./dist/frameworks/*.js",
     "./elements/*.js": "./dist/elements/*.js",
-    "./elements/*": "./dist/elements/*"
+    "./elements/*": "./dist/elements/*.js"
   },
   "files": ["dist", "README.md", "LICENSE"],
   "sideEffects": false,
@@ -48,13 +52,16 @@
   },
   "scripts": {
     "fetch": "node scripts/fetch-public-data.mjs",
+    "predata": "npm run build",
     "data": "node scripts/build-sample-data.mjs && node scripts/build-order-book.mjs",
+    "precheck": "npm run build",
     "check": "node scripts/verify.mjs",
     "pretest": "npm run build",
     "test": "node --test scripts/tests/*.test.mjs",
-    "typecheck": "tsc --noEmit --lib es2020,dom --module esnext --moduleResolution bundler src/index.d.ts src/pure.d.ts src/events.d.ts src/frameworks/react.d.ts src/frameworks/vue.d.ts",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json",
     "build": "node scripts/build.mjs",
     "prepublishOnly": "npm run check && npm run typecheck && npm test && npm run build",
+    "preserve": "npm run build",
     "serve": "node scripts/serve.mjs"
   },
   "devDependencies": {

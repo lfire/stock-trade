@@ -54,41 +54,60 @@ test('exports 的每个目标文件都存在', () => {
     'dist 缺少 ./events 或 ./vue 子路径产物');
 });
 
-test('类型声明覆盖入口导出的类与关键 API', () => {
-  const dts = read('src/index.d.ts');
+test('tsc 自动生成的声明覆盖入口导出的类与关键 API', () => {
+  // 切换 TS 后声明由 tsc 从 src/**/*.ts 生成，分散在 index/types/elements 三个 .d.ts
+  const indexDts = read('dist/index.d.ts');
+  const typesDts = read('dist/types.d.ts');
+  const stockDts = read('dist/elements/stock-chart.d.ts');
+  const auctionDts = read('dist/elements/auction-pane.d.ts');
   for (const name of ['StockChart', 'PricePane', 'IndicatorPane', 'ChipPane', 'AuctionPane',
-    'TradeTape', 'DepthBook', 'defineAll', 'ELEMENT_TAGS', 'withPalette', 'bindStockChart',
-    'syncSideBars', 'refreshDefaultMAColors']) {
-    assert.ok(new RegExp(`\\b${name}\\b`).test(dts), `index.d.ts 缺少 ${name}`);
+    'TradeTape', 'DepthBook', 'defineAll', 'ELEMENT_TAGS', 'withPalette', 'bindStockChart']) {
+    assert.ok(new RegExp(`\\b${name}\\b`).test(indexDts), `index.d.ts 缺少 ${name}`);
   }
-  assert.ok(!dts.includes('export declare class PaneElementBase'), '仍有幽灵基类导出');
-  assert.ok(dts.includes('export declare class AuctionPane extends HTMLElement'), 'AuctionPane 继承声明错误');
+  assert.ok(indexDts.includes("reference path=\"./global.d.ts\""), '根声明未引用全局 JSX 声明');
+  assert.ok(read('dist/global.d.ts').includes('namespace JSX'), 'dist/global.d.ts 未复制');
+  for (const name of ['StockChartState', 'StockChartEventMap', 'ChartContextFacade', 'ChartDataset']) {
+    assert.ok(new RegExp(`\\b${name}\\b`).test(typesDts), `types.d.ts 缺少 ${name}`);
+  }
+  for (const name of ['syncSideBars', 'refreshDefaultMAColors', 'getContext']) {
+    assert.ok(new RegExp(`\\b${name}\\b`).test(stockDts), `stock-chart.d.ts 缺少 ${name}`);
+  }
+  assert.ok(!read('dist/elements/pane-base.d.ts').includes('PaneElementBase'), '仍有幽灵基类导出');
+  assert.ok(/class AuctionPane extends HTMLElement/.test(auctionDts), 'AuctionPane 继承声明错误');
 });
 
 test('事件映射与 CHART_EVENTS 常量表双向一致', () => {
-  const dts = read('src/index.d.ts');
-  const map = dts.slice(dts.indexOf('StockChartEventMap'), dts.indexOf('// ---- 根容器 ----'));
+  // 事件映射现在在 dist/types.d.ts（由 src/types.ts 生成）
+  const dts = read('dist/types.d.ts');
+  const start = dts.indexOf('interface StockChartEventMap');
+  assert.ok(start > 0, 'types.d.ts 缺少 StockChartEventMap');
+  const map = dts.slice(start, dts.indexOf('\n}', start));
   const declared = new Set([...map.matchAll(/'([a-z][a-z-]+)'\s*:/g)].map((m) => m[1]));
-  // 事件名不再散落在 new CustomEvent('...') 字面量里，统一登记在 src/events.js
-  const evSrc = read('src/events.js');
+  const evSrc = read('src/events.ts');
   const table = evSrc.slice(evSrc.indexOf('CHART_EVENTS'), evSrc.indexOf('/** 统一派发'));
   const emitted = new Set([...table.matchAll(/'([a-z][a-z-]+)'/g)].map((m) => m[1]));
-  for (const e of declared) assert.ok(emitted.has(e), `d.ts 声明了未登记的事件：${e}`);
-  for (const e of emitted) assert.ok(declared.has(e), `CHART_EVENTS 登记了未在 d.ts 声明的事件：${e}`);
+  for (const e of declared) assert.ok(emitted.has(e), `声明了未登记的事件：${e}`);
+  for (const e of emitted) assert.ok(declared.has(e), `CHART_EVENTS 登记了未声明的事件：${e}`);
   assert.ok(declared.size >= 20, `事件映射数量异常：${declared.size}`);
-  // 全仓只有 events.js 允许直接构造 CustomEvent，统一 bubbles + composed
+  // 全仓只有 events.ts 允许直接构造 CustomEvent，统一 bubbles + composed
   const walk = (dir) => readdirSync(join(root, dir), { recursive: true })
-    .filter((f) => typeof f === 'string' && f.endsWith('.js') && !f.startsWith('data/'))
+    .filter((f) => typeof f === 'string' && f.endsWith('.ts')
+      && !f.endsWith('.d.ts') && !f.startsWith('data/'))
     .map((f) => `${dir}/${f}`);
   const direct = walk('src').filter((f) => read(f).includes('new CustomEvent('));
-  assert.deepEqual(direct, ['src/events.js'], `仍有模块绕过 emitEvent：${direct.join(', ')}`);
+  assert.deepEqual(direct, ['src/events.ts'], `仍有模块绕过 emitEvent：${direct.join(', ')}`);
 });
 
-test('dist 与 src 的模块文件一一对应', () => {
-  const list = (dir) => readdirSync(join(root, dir), { recursive: true })
-    .filter((f) => typeof f === 'string' && (f.endsWith('.js') || f.endsWith('.d.ts')))
-    .sort();
-  const srcFiles = list('src').filter((f) => !f.startsWith('data/'));
-  const distFiles = list('dist');
-  for (const f of srcFiles) assert.ok(distFiles.includes(f), `dist 缺少 ${f}`);
+test('每个 src 模块都有 tsc 生成的 .js 与 .d.ts', () => {
+  const list = (dir, exts) => readdirSync(join(root, dir), { recursive: true })
+    .filter((f) => typeof f === 'string' && exts.some((e) => f.endsWith(e))
+      && !f.startsWith('data/')).sort();
+  const srcFiles = list('src', ['.ts']).filter((f) => !f.endsWith('.d.ts'));
+  const distFiles = list('dist', ['.js', '.d.ts']);
+  assert.ok(srcFiles.length >= 24, `src 模块数量异常：${srcFiles.length}`);
+  for (const f of srcFiles) {
+    const base = f.slice(0, -3);
+    assert.ok(distFiles.includes(`${base}.js`), `dist 缺少 ${base}.js`);
+    assert.ok(distFiles.includes(`${base}.d.ts`), `dist 缺少 ${base}.d.ts`);
+  }
 });

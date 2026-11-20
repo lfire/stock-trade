@@ -46,7 +46,7 @@
     <ul>
       <li><strong>出入参契约</strong>：修正 14 处 <code>.d.ts</code> 与实现不符、删除 3 个幽灵属性、补齐 <code>period</code> / <code>chip-mode</code> 属性与 React 的 <code>macd</code> / <code>intradayDays</code> 映射；补参数防御与只读返回值。</li>
       <li><strong>数据可获得性</strong>：核实交易所法定公开范围与 Level-2 授权边界，为 10 个数据集建立 <code>manifest.provenance</code> 摘要，数据体补 <code>source</code> / <code>license</code> / <code>requiresAuthorization</code>，UI 增加示意与拟真提示。</li>
-      <li><strong>模块化</strong>：新增 <code>src/core/market-constants.js</code> 作为 A 股业务常量单一真源，消除时段 / 0.01 / ×100 / 240 分钟的多份拷贝；涨跌停 0.9/1.1 硬编码改为按 <code>manifest.limitRate</code> 计算。</li>
+      <li><strong>模块化</strong>：新增 <code>src/core/market-constants.ts</code> 作为 A 股业务常量单一真源，消除时段 / 0.01 / ×100 / 240 分钟的多份拷贝；涨跌停 0.9/1.1 硬编码改为按 <code>manifest.limitRate</code> 计算。</li>
       <li><strong>工程一致性</strong>：<code>npm run data</code> 补齐两步生成链、<code>typecheck</code> 纳入 <code>react.d.ts</code>、<code>data-store</code> 缺失分片按注释真正跳过。</li>
     </ul>
   </div>
@@ -57,7 +57,7 @@
     <div class="kpi"><b>10</b><span>数据集全部登记 provenance</span></div>
     <div class="kpi"><b class="green">0</b><span>审计问题剩余待办（8 组全部完成，见第 6 节）</span></div>
   </div>
-  <div class="src">数据来源：项目源码逐文件盘点（36 个 JS/MJS）、<code>src/data/*.json</code> 只读解析、<code>scripts/verify.mjs</code> 与 6 组测试；外部口径按金融检索路由核实，检索时点 2026-11-19。</div>
+  <div class="src">数据来源：项目源码逐文件盘点（初版 36 个 JS/MJS；2026-11-19 起为 24 个 TS 模块 + 17 个 MJS 脚本）、<code>src/data/*.json</code> 只读解析、<code>scripts/verify.mjs</code> 与 8 组测试；外部口径按金融检索路由核实，检索时点 2026-11-19。</div>
 
   <h2>一、外部口径：五类数据的可获得性与授权边界</h2>
   <table>
@@ -108,8 +108,8 @@
   <h2>四、模块化规范</h2>
   <div class="card">
     <ul>
-      <li><strong>依赖方向</strong>：<code>types.js</code>（叶子）← <code>gl</code> / <code>compute</code> / <code>core</code> ← <code>elements</code> ← <code>index.js</code>，零循环依赖；<code>core</code> 不 <code>querySelector</code> DOM，<code>compute/indicators.js</code> 保持纯函数（本轮仅依赖零依赖的常量叶子）。</li>
-      <li><strong>单一真源</strong>：新增 <code>src/core/market-constants.js</code>，导出 <code>PRICE_TICK / PRICE_EPS / LOT_SIZE / AM_START…PM_END / SESSION_MINUTES / DAY_MINUTES / HALF_HOUR_MARKS / AUCTION_*</code>；<code>indicators.js</code>、<code>bar-aggregator.js</code>、<code>limit-rules.mjs</code>、<code>chart-context.js</code> 改为引用，并经 <code>./pure</code> 导出。</li>
+      <li><strong>依赖方向</strong>：<code>types.ts</code>（叶子）← <code>gl</code> / <code>compute</code> / <code>core</code> ← <code>elements</code> ← <code>index.js</code>，零循环依赖；<code>core</code> 不 <code>querySelector</code> DOM，<code>compute/indicators.js</code> 保持纯函数（本轮仅依赖零依赖的常量叶子）。</li>
+      <li><strong>单一真源</strong>：新增 <code>src/core/market-constants.ts</code>，导出 <code>PRICE_TICK / PRICE_EPS / LOT_SIZE / AM_START…PM_END / SESSION_MINUTES / DAY_MINUTES / HALF_HOUR_MARKS / AUCTION_*</code>；<code>indicators.ts</code>、<code>bar-aggregator.ts</code>、<code>limit-rules.mjs</code>、<code>chart-context.ts</code> 改为引用，并经 <code>./pure</code> 导出。</li>
       <li><strong>涨跌停比例</strong>：委托流与校验不再硬编码 <code>0.9/1.1</code>，改 <code>limitPrices(preClose, manifest.limitRate)</code>，换创业板/科创板数据时边界与校验同步跟随。</li>
       <li><strong>工程链</strong>：<code>npm run data</code> 改为「生成主数据 + 生成委托簿」两步（此前单跑会丢 manifest 的 3 个派生键导致 check 失败）；<code>typecheck</code> 纳入 <code>frameworks/react.d.ts</code>。</li>
       <li><strong>重复实现收敛</strong>：<code>r2</code> 4 份、<code>split(':')</code> 6 份、<code>PRICE_EPS</code> 2 份中的后两项已收口；剩余 <code>r2</code> / <code>mulberry32</code> / 竞价时段常量仍分散，列入待办。</li>
@@ -120,7 +120,7 @@
   <table>
     <thead><tr><th>项目</th><th>结果</th></tr></thead>
     <tbody>
-      <tr><td><code>npm run check</code></td><td>36 个源码文件语法检查 + 数据契约 + 预置期望值断言，全部通过</td></tr>
+      <tr><td><code>npm run check</code></td><td>24 个 TS 模块（由 tsc strict 校验）+ 41 个 JS/MJS 产物语法检查 + 数据契约 + 预置期望值断言，全部通过</td></tr>
       <tr><td><code>npm test</code></td><td><strong>63/63</strong>（7 个运行时契约 + 7 个 P0 受控状态 + 11 个 P1/P2 架构回归）</td></tr>
       <tr><td>P1/P2 浏览器探针</td><td>点击盘口单位按钮：<code>depth-unit-change</code> 只派发 <strong>1 次</strong>、<code>request</code> 1 次、页面下拉 volume → amount 同步、<code>chart-error</code> 0；门面仍冻结、序列 242 点，0 JS 错误</td></tr>
       <tr><td>P1/P2 截图回归</td><td>8 场景 0 JS 错误；前 5 张文件大小与改动前一致（像素级无视觉回归），含盘口单位 amount、涨停场景、全景放大视图</td></tr>
@@ -139,13 +139,45 @@
       <tr><td><span class="tag t-ok">P0 已完成</span></td><td><code>getContext()</code> 原返回可变 ChartContext（50+ 公开方法无类型声明）</td><td>改为 <strong>只读门面</strong>：<code>ChartContext.readonlyFacade()</code> 返回 <code>Object.freeze</code> + Proxy set/delete 陷阱的对象，状态 getter 全是浅拷贝、查询方法返回数组拷贝、不暴露 <code>setMode/setDataset/requestRender/applyLayout</code> 等内部方法；<code>index.d.ts</code> 新增精确的 <code>ChartContextFacade</code> 接口，不再用 <code>unknown</code>。生产代码中本无调用方，兼容包袱已消除，仍标 deprecated 待下个主版本移除</td></tr>
       <tr><td><span class="tag t-ok">P0 已完成</span></td><td>组件层 9 处绕过 setter 直接写 ctx（初始化 3 处、<code>palette</code> / <code>viewport</code> / <code>depthFull</code> 各 1–2 处、<code>priceScale</code> 2 处）</td><td>在 ChartContext 新增受控 setter：<code>configure()</code>（初始化，不 emit）、<code>setPalette()</code>、<code>setPriceScale()</code>（校验 min/max）、<code>setDepthFull()</code>、<code>setViewport()</code>（钳制 + emit + 重绘，逻辑从组件层搬入 core）；组件层全部改为转调，静态核查<strong>组件层直接写 ctx = 0 处</strong>。顺带修正初始 mode 在 <code>layout()</code> 之后才设置的时序问题</td></tr>
       <tr><td><span class="tag t-ok">P1 已完成</span></td><td>数据重跑不可完全复现：生成脚本读 <code>hist_intraday.json</code>，抓取脚本只产出 <code>tx_minute.json</code></td><td>统一规范名：<code>npm run fetch</code> 一次抓取同时写 <code>hist_intraday.json</code> + 别名 <code>tx_minute.json</code>；生成脚本建立「规范名 → 兼容名 → <code>src/data/raw</code> 归档副本」三级回退并校验分钟点非空，离线也能完整重跑；<code>SOURCES.md</code> 记录回退链；<code>npm run data</code> 已含两步生成链</td></tr>
-      <tr><td><span class="tag t-ok">P1 已完成</span></td><td>事件契约漂移：<code>chart-error</code> 两处 options 不同、<code>depth-unit-change</code> 双派发源、<code>webglcontext-*</code> options 不对称；事件名未集中登记</td><td>新建 <code>src/events.js</code>：<code>CHART_EVENTS</code> 冻结常量表 + <code>emitEvent()</code>（统一 bubbles/composed）。全仓 <code>new CustomEvent</code> 收敛到该文件一处；盘口单位改为 <code>depth-unit-request</code> → 根容器唯一派发 <code>depth-unit-change</code>，浏览器探针实测点击一次只派发一次；<code>chart-error</code> / <code>webglcontext-*</code> options 统一；<code>index.d.ts</code> 补 request 事件</td></tr>
+      <tr><td><span class="tag t-ok">P1 已完成</span></td><td>事件契约漂移：<code>chart-error</code> 两处 options 不同、<code>depth-unit-change</code> 双派发源、<code>webglcontext-*</code> options 不对称；事件名未集中登记</td><td>新建 <code>src/events.ts</code>：<code>CHART_EVENTS</code> 冻结常量表 + <code>emitEvent()</code>（统一 bubbles/composed）。全仓 <code>new CustomEvent</code> 收敛到该文件一处；盘口单位改为 <code>depth-unit-request</code> → 根容器唯一派发 <code>depth-unit-change</code>，浏览器探针实测点击一次只派发一次；<code>chart-error</code> / <code>webglcontext-*</code> options 统一；<code>index.d.ts</code> 补 request 事件</td></tr>
       <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>exports</code> 未暴露 <code>dist/core/*</code> / <code>dist/gl/*</code>；<code>./elements/*</code> 有 <code>.js.js</code> 陷阱；无 <code>./vue</code></td><td>补齐 <code>./vue</code> / <code>./events</code> / <code>./core/*</code> / <code>./gl/*</code> / <code>./compute/*</code> / <code>./frameworks/*</code>；通配符目标改为 <code>./dist/elements/*</code> 消除拼接陷阱；新增无运行时依赖的 <code>vStockChart</code> 指令与类型；<code>typecheck</code> 纳入全部 <code>.d.ts</code>；<code>pretest</code> 保证 build 顺序</td></tr>
       <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>r2</code> 4 份、<code>mulberry32</code> 2 份、竞价时段常量 6 份；<code>manifest.session</code> 无代码读取；UI 硬编码「前复权」</td><td>新建 <code>scripts/shared.mjs</code>（<code>r2/r6/mulberry32</code>）供 4 个脚本共用；<code>market-constants.js</code> 补 <code>AUCTION_STEP_SEC</code> / <code>TIME</code> / <code>SESSION</code>，委托流时段字面量与 manifest.session 均改为引用；<code>getSeries()</code> 收盘时刻读 <code>manifest.session</code>（缺省回退 15:00）；主图复权标签读 <code>manifest.adjust</code>。数值序列与旧实现等价，委托流 1377 条 / 全景 53-33 档不变</td></tr>
       <tr><td><span class="tag t-ok">P2 已完成</span></td><td>文档数字漂移；<code>generatedAt</code> 与 <code>floatShares</code> 硬编码</td><td>README 数字修正为 507 / 1377 / 53-33 并消除 0.5% 容差矛盾；<code>generatedAt</code> 改当前 UTC 时间并支持 <code>SOURCE_DATE_EPOCH</code> 可复现构建；<code>floatShares</code> 改读 <code>src/data/raw/instrument.json</code>（含来源与 asOf），manifest 增加 <code>floatSharesSource</code></td></tr>
       <tr><td><span class="tag t-ok">P2 已完成</span></td><td>废弃 <code>adaptiveMACDParams</code> / <code>CLEAR</code>；<code>setMA</code> 与 <code>setMovingAverages</code> 两套命名；<code>PALETTE</code> 全局可变单例</td><td>删除两个废弃导出（测试改用 <code>resolveMACDParams</code>）；均线写入统一为 <code>ChartContext.setMovingAverages()</code>，组件层无 <code>setMA</code> 残留；新增纯函数 <code>createPalette()</code> 并给 <code>applyPalette/resetPalette</code> 标 <code>@deprecated</code>（保留 <code>withPalette</code> 的帧级机制，不改渲染行为）</td></tr>
     </tbody>
   </table>
+  <h2>七、后续工程切换：整体 TypeScript 化（2026-11-19）</h2>
+  <div class="card">
+    <ul>
+      <li><strong>范围</strong>：<code>src/</code> 24 个模块 <code>.js → .ts</code>，<code>strict: true</code> 全量标注（本地 <code>typescript@5.6.3</code> 与全局 TS 7.0 <code>tsc --noEmit</code> 均零错误、无隐式 any）；<code>scripts/</code> 的 17 个 <code>.mjs</code> 保持原生 Node 运行，不引入 <code>tsx</code> 之类运行时依赖。</li>
+      <li><strong>类型单一真源</strong>：删除 5 个手写 <code>.d.ts</code>，全部共享类型（数据契约、<code>StockChartEventMap</code>、<code>ChartContextFacade</code>、JSX 属性等）收口到 <code>src/types.ts</code>，由 tsc 自动生成 <code>dist/**/*.d.ts</code>；仅 <code>src/global.d.ts</code>（<code>declare global</code> 的 JSX / <code>HTMLElementTagNameMap</code>）保留手写，由 <code>scripts/build.mjs</code> 复制进 dist 并在 <code>dist/index.d.ts</code> 注入三斜线引用。</li>
+      <li><strong>构建链</strong>：<code>build.mjs</code> 从「复制 JS」改为「本地 tsc 编译 → 复制全局声明 → 注入引用 → <strong>产物 import 扩展名补全</strong> → <code>node --check</code>」；<code>tsconfig.json</code> 用 <code>useDefineForClassFields: false</code> 保持类字段赋值语义、<code>moduleResolution: Bundler</code> 解析无扩展名 import。源码统一写 <code>'./chip-pane'</code>（2026-11-19 后续改造，共 86 处），由构建脚本在编译后把 <code>dist/**/*.js</code> 与 <code>.d.ts</code> 的相对引用补成 <code>.js</code>（108 处），因为 tsc 自身不会补扩展名。验收时用注释归一化 hash 对比确认 <strong>24 个 JS + 25 个 .d.ts 与改造前逐字节一致</strong>。</li>
+      <li><strong>运行时链路</strong>：<code>index.html</code> 改从 <code>./dist/index.js</code> 加载；<code>scripts/*.mjs</code> 与 8 组测试的 import 改指 <code>dist</code> 产物、源码文本断言改指 <code>.ts</code>；<code>predata/precheck/pretest/preserve</code> 保证任何脚本前先构建。</li>
+      <li><strong>行为一致性</strong>：各标注组用 <code>transpileModule</code> 逐模块对比，编译产物与原 JS 字节级一致；7 场景截图 0 JS 错误、与切换前文件大小差异 ≤ 2 字节（像素级一致）；<code>check</code> / <code>test</code>(63/63) / <code>typecheck</code> / <code>build</code> / <code>pack</code> 全通过。</li>
+    </ul>
+  </div>
+
+  <h2>八、显式 any 全面收敛（2026-11-19）</h2>
+  <div class="card">
+    <ul>
+      <li><strong>规模</strong>：全仓 205 处显式 <code>any</code> 归零，覆盖 14 个文件（<code>stock-chart.ts</code> 81、<code>chart-context.ts</code> 42、<code>trade-tape.ts</code> 25、<code>depth-book.ts</code> 18 等）；另补齐 tsc 推断产生的 15 处声明级 <code>any</code>，<code>src/**/*.ts</code> 与 <code>dist/**/*.d.ts</code> 均为 0。</li>
+      <li><strong>手段</strong>：共享类型收口到 <code>src/types.ts</code>；字段 <code>declare f: 精确类型 | null</code>，调用点用 <code>!</code> 非空断言（编译后擦除，不加空检查/可选链）；<code>catch (e: unknown)</code>；事件回调用具体 DOM 事件类型；URL/HTML 属性入参用 <code>NumericInput</code>。未使用 <code>as unknown as X</code>。</li>
+      <li><strong>声明质量</strong>：给 <code>getDataset()</code> / <code>getSubplotConfig()</code> / <code>setSubplotIndicator()</code> / <code>getContext()</code> / <code>chipSnapshotAt()</code> 补显式返回类型，消除 tsc 生成的 <code>import("..")</code>（Bundler 可解析、NodeNext 报 TS2307 共 13 处）。修复后独立第三方项目 Bundler / NodeNext / TSX 三种配置均 0 错误。</li>
+      <li><strong>零运行时改动</strong>：四组代理各自用 <code>transpileModule(removeComments:true)</code> 对比改动前后逐字节一致；主代理用 24 个 JS 产物的归一化 hash 与基线比对，差异为 0。<code>.d.ts</code> 变化属预期（类型更精确）。</li>
+    </ul>
+  </div>
+
+  <h2>九、数据分层与算法单元化（2026-11-20）</h2>
+  <div class="card">
+    <ul>
+      <li><strong>数据分层</strong>：审查确认 10 个业务 JSON 中只有 2 个真实公开行情输入（日 K 935 根、分时 267 点）+ 1 份静态流通股本，其余 8 个均由构建期确定性生成。按「尽量少依赖外部数据」把 <code>chips / intraday_5d / depth_full / depth_scenarios</code> 四个纯派生 JSON 删除，改由 <code>src/core/derive-dataset.ts</code> 在运行时生成；<code>manifest.files / provenance</code> 收敛为 6 键，另 4 个 Level-2 示意数据保留（真实逐笔/委托簿需授权，无法由分钟数据反推）。</li>
+      <li><strong>算法单元</strong>：新建 <code>src/algorithms/</code> 共 18 个纯 TS 模块，以「概念」而非「图表/文件」分割；<code>ALGORITHMS</code> 注册表登记 id / 概念 / 输入输出 / 共用方 / pure 元数据，<code>pure</code> 子入口统一导出；<code>scripts</code> 的三个工具脚本改为薄 re-export，构建期与运行时复用同一实现。</li>
+      <li><strong>闭合修复（数值证据）</strong>：分时 15:00 累计额与日 K 差由 +22804.62 元 → 0；逐笔按分钟聚合由 242/242 分钟 amount 不等 → 0 分钟不等；委托流由 261 条悬空挂单 / 两套状态机 → <code>ΣNEW = ΣFILL + ΣCANCEL + Σsnapshot</code> 恒等；多日前 4 日累计量由约为 bars 的 3~4 倍 → 严格相等；全景盘口保持 53 买 / 33 卖档且与「全部挂单」同源、覆盖涨跌停价。</li>
+      <li><strong>口径与交互</strong>：换手率统一 <code>%</code>、<code>trim</code> 统一 0 位小数、涨跌幅按各交易日昨收（多日末日 +1.77% 与单日一致）、场景切换改用独立 <code>scenarioPano</code> 不再覆盖 <code>dataset.depthFull</code>、撮合补齐申报价间 0.01 步长中间价候选。</li>
+      <li><strong>验收</strong>：<code>verify.mjs</code> 新增 8 条跨图闭合断言；<code>check</code> 通过、<code>test</code> 64/64、<code>typecheck</code> 0 错误、<code>build</code> 44 JS + 45 声明、<code>pack</code> 93 文件；第三方 TS 项目 Bundler / NodeNext / TSX 三种配置均 0 错误；8 场景浏览器截图 0 JS 错误。</li>
+    </ul>
+  </div>
+
   <p class="src"><strong>处置结论（2026-11-19）：审计发现的 8 组问题全部完成</strong>（P0 两项先做，随后 P1 四组 + P2 两组一次性完成）。累计 <strong>63/63</strong> 测试通过、8 场景截图 0 JS 错误、浏览器事件探针确认单位切换单一派发且下拉同步正常。剩余待观察项仅为「下个主版本移除 <code>getContext()</code>」这类兼容性清理，已标 deprecated，不列入本轮待办。</p>
 
   <div class="foot">

@@ -331,7 +331,9 @@
 
 <script type="module">
 // 组件模块本身无副作用，统一由注册入口显式升级标签
-import { defineAll, SUBPLOT_INDICATORS, PERIODS, LAYOUT, PALETTE } from './src/index.js';
+import { defineAll, SUBPLOT_INDICATORS, PERIODS, LAYOUT, PALETTE } from './dist/index.js';
+// trim 收口到 algorithms/format（页面侧统一用 ./dist/... 引入，≥100 → 0 位小数，与 depth-book 一致）
+import { trim } from './dist/algorithms/format.js';
 defineAll();
 // 均线颜色选择器的初值也取自色板，避免页面写死 hex
 document.getElementById('ma-color').value = PALETTE.limitDownBroken;
@@ -425,6 +427,7 @@ chart.addEventListener('chart-error', (e) => {
   window.pushFatal?.(e.detail.message);
 });
 chart.addEventListener('webglcontext-lost', () => setStatus('WebGL 上下文丢失', true));
+chart.addEventListener('webglcontext-restored', () => setStatus('WebGL 上下文已恢复', false));
 chart.addEventListener('dataset-ready', (e) => bindDataset(e.detail.dataset));
 if (chart.getState().datasetReady) bindDataset(chart.getDataset());
 
@@ -557,7 +560,9 @@ function buildDetailGroups() {
 function renderPanorama() {
   if (!detailCover) return;
   const host = detailCover.querySelector('.cover-panorama');
-  const p = chart.getState().pano;
+  // 读组件暴露的「当前场景全景盘口」：切 limitUp 显示封单、切回 normal 恢复原始盘口；
+  // 不再读 chart.getState().pano（后者恒为数据集原始全景，不随场景变化）。
+  const p = chart.getScenarioPano();
   if (!p) { host.innerHTML = '<div class="pano-empty">全景盘口数据未就绪</div>'; return; }
   // 全部统计都由当前 bids/asks 实时计算，不写在数据文件里：
   // 吃光所有卖档 = 拉到涨停；吃光所有买档 = 砸到跌停。
@@ -580,9 +585,8 @@ function renderPanorama() {
   // 金额按「委托价 × 挂单量」实时计算；量柱也按当前口径归一化
   const isAmt = chart.getState().depthUnit === 'amount';
   const metric = (d) => isAmt ? d.price * d.volume : d.volume;
-  // 数值按大小自适应换算 万 / 亿，小数位随量级收敛；精确值放 title 供 hover 查看
-  const trim = (x) => (x >= 100 ? x.toFixed(1) : x.toFixed(2))
-    .replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1');
+  // 数值按大小自适应换算 万 / 亿，小数位随量级收敛；精确值放 title 供 hover 查看。
+  // trim 已在模块顶部从 algorithms/format 引入（≥100 → 0 位、≥10 → 1 位、其余 2 位），与 format.ts / depth-book 同口径。
   const fmtCell = (d) => {
     const v = metric(d);
     return v >= 1e8 ? `${trim(v / 1e8)}亿` : v >= 1e4 ? `${trim(v / 1e4)}万` : `${Math.round(v)}`;

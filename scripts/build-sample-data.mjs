@@ -6,8 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { matchAuction, makeOrderBook } from './auction-match.mjs';
 import { limitRateFor, limitStateOf } from './limit-rules.mjs';
-import { r2, r6, mulberry32 } from './shared.mjs';
-import { AUCTION_STEP_SEC, SESSION, AFTER_HOURS } from '../src/core/market-constants.js';
+import { r2, mulberry32 } from './shared.mjs';
+import { AUCTION_STEP_SEC, SESSION, AFTER_HOURS } from '../dist/core/market-constants.js';
 
 const SYMBOL = '600519.SH';
 const NAME = '贵州茅台';
@@ -21,21 +21,6 @@ mkdirSync(dataDir, { recursive: true });
 mkdirSync(rawCopyDir, { recursive: true });
 
 const TRADE_DATE = '2026-11-13';   // 固定历史完整交易日，避免「当日进行中」数据导致 case 不稳定
-/** 筹码模型参数可通过 CLI 覆写：npm run data -- --chips-decay=2 --chips-shape=uniform */
-const cliArg = (key, fallback) => {
-  const hit = process.argv.find((a) => a.startsWith(`--${key}=`));
-  return hit ? hit.slice(hit.indexOf('=') + 1) : fallback;
-};
-const numArg = (key, fallback, min, max) => {
-  const v = Number(cliArg(key, fallback));
-  return Number.isFinite(v) && v >= min && v <= max ? v : Number(fallback);
-};
-const CHIPS_OPTS = Object.freeze({
-  bins: Math.round(numArg('chips-bins', 150, 20, 500)),
-  lookback: Math.round(numArg('chips-lookback', 120, 20, 1000)),
-  decay: numArg('chips-decay', 1, 0.1, 10),
-  shape: cliArg('chips-shape', 'triangular') === 'uniform' ? 'uniform' : 'triangular',
-});
 /**
  * 原始数据按「规范名 → 兼容名 → 仓库归档副本」回退：
  * 腾讯分时接口常返回空，.tmp-raw 未抓取时 src/data/raw 的归档副本仍可让 npm run data 完整重跑。
@@ -167,132 +152,6 @@ function buildIntraday() {
   });
   notes.push(`分时：腾讯 minute/query 在 ${iso} 的真实完整交易日数据 ${points.length} 点（上午 121 + 下午 121 + 盘后 25）。腾讯返回累计量额，已差分为每分钟增量并按「累计额 ÷ (累计量 × 100)」还原均价。`);
   return { iso, points };
-}
-
-/**
- * 多日分时示例：最近 5 个交易日拼成一个扁平数组，每个点带 tradeDate。
- * 最后一日用真实分时（截到 15:00）；前 4 日历史分时属 L2 无法回溯，按当日日 K 的
- * open/high/low/close 用固定种子确定性拟真生成（价格 clamp 在当日高低区间内，
- * 成交量整百股、额=价×量、均价=累计额/累计量，与真实数据同构）。
- */
-function buildIntradayMulti(bars, realPoints, days = 5) {
-  const win = bars.slice(-days);
-  const times = [];
-  for (let m = 9 * 60 + 30; m <= 11 * 60 + 30; m += 1) {
-    times.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
-  }
-  for (let m = 13 * 60; m <= 15 * 60; m += 1) {
-    times.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
-  }
-  const out = [];
-  win.forEach((b, dayIdx) => {
-    if (dayIdx === win.length - 1) {
-      for (const p of realPoints) {
-        if (p.time <= '15:00') out.push({ ...p, tradeDate: b.tradeDate, source: 'real-intraday' });
-      }
-      return;
-    }
-    const rndDay = mulberry32(20261113 + dayIdx);
-    let cumVol = 0, cumAmt = 0;
-    const range = Math.max(0.01, b.high - b.low);
-    times.forEach((t, i) => {
-      const k = i / (times.length - 1);
-      const wave = Math.sin(k * Math.PI * 2.4 + dayIdx) * range * 0.16
-        + (rndDay() - 0.5) * range * 0.06;
-      const price = r2(Math.max(b.low, Math.min(b.high, b.open + (b.close - b.open) * k + wave)));
-      const vol = Math.max(100, Math.round((12000 + rndDay() * 60000) / 100) * 100);
-      const amt = r2(price * vol);
-      cumVol += vol; cumAmt += amt;
-      out.push({
-        timestamp: Date.parse(`${b.tradeDate}T${t}:00+08:00`),
-        time: t, tradeDate: b.tradeDate,
-        source: 'simulated-from-daily-ohlc',   // 历史分钟分时无免费公开源，按当日日 K OHLC 拟真
-        price, avgPrice: r2(cumAmt / cumVol),
-        volume: vol, amount: amt,
-        cumulativeVolume: cumVol, cumulativeAmount: r2(cumAmt),
-        session: t <= '11:30' ? 'morning' : 'afternoon',
-      });
-    });
-  });
-  notes.push(`多日分时：${win.length} 个交易日（${win[0].tradeDate} ~ ${win.at(-1).tradeDate}）拼成扁平数组，每点带 tradeDate；末日取真实分时（截到 15:00 共 242 点），前 ${win.length - 1} 日按当日日 K 的 OHLC 以固定种子确定性拟真生成（价格 clamp 在当日高低区间、量整百股、额=价×量、均价=累计额/累计量）。多日场景不展示集合竞价段。`);
-  return out;
-}
-
-// ---------------------------------------------------------------- 3. 筹码峰（由真实日 K 计算）
-function summarize(grid, ratios, close) {
-  const at = (q) => {
-    let cum = 0;
-    for (let i = 0; i < grid.length; i += 1) { cum += ratios[i]; if (cum >= q) return grid[i]; }
-    return grid[grid.length - 1];
-  };
-  const profitRatio = ratios.reduce((s, r, i) => s + (grid[i] <= close ? r : 0), 0);
-  // 加权平均成本 = Σ(价格档 × 该档筹码占比) / Σ占比，与中位数 avgCost 是两个概念
-  let wr = 0, wsum = 0;
-  for (let i = 0; i < grid.length; i += 1) { wr += ratios[i]; wsum += ratios[i] * grid[i]; }
-  const c90l = at(0.05), c90h = at(0.95), c70l = at(0.15), c70h = at(0.85);
-  return {
-    profitRatio: r6(profitRatio),
-    avgCost: at(0.5),
-    weightedAvgCost: wr > 0 ? r2(wsum / wr) : 0,
-    cost90Low: c90l, cost90High: c90h,
-    concentration90: r6((c90h - c90l) / (c90h + c90l)),
-    cost70Low: c70l, cost70High: c70h,
-    concentration70: r6((c70h - c70l) / (c70h + c70l)),
-  };
-}
-
-function buildChips(bars, opts = {}) {
-  const BINS = opts.bins ?? 150;
-  const LOOKBACK = opts.lookback ?? 120;
-  const DECAY = opts.decay ?? 1;                 // 历史换手衰减系数 n（通达信默认 1，范围 0.1–10）
-  const SHAPE = opts.shape ?? 'triangular';      // 'triangular' | 'uniform'（平均分布）
-  const win = bars.slice(-LOOKBACK);
-  const lo = Math.min(...win.map((b) => b.low)) * 0.98;
-  const hi = Math.max(...win.map((b) => b.high)) * 1.02;
-  const step = (hi - lo) / BINS;
-  const priceGrid = Array.from({ length: BINS }, (_, i) => r2(lo + (i + 0.5) * step));
-  const stock = new Float64Array(BINS);
-  const stats = [], histograms = [];
-  win.forEach((b) => {
-    const turn = Math.min(Math.max((b.turnoverRate / 100) * DECAY, 0), 1);
-    for (let i = 0; i < BINS; i += 1) stock[i] *= (1 - turn);   // 存量筹码按换手率×衰减系数折损
-    // 通达信三角形分布的峰在「当日成交均价（成交额/成交量）」，不是四价算术均值；
-    // 一字板/金额缺失时回退四价均价，并始终把峰 clamp 在当日 [low, high] 内。
-    const vwap = b.amount > 0 && b.volume > 0
-      ? b.amount / b.volume : (b.open + b.close + b.high + b.low) / 4;
-    const peak = Math.max(b.low, Math.min(b.high, vwap));
-    const w = new Float64Array(BINS);
-    let sum = 0;
-    for (let i = 0; i < BINS; i += 1) {
-      const p = priceGrid[i];
-      if (p < b.low || p > b.high) continue;
-      let v;
-      if (SHAPE === 'uniform') v = 1;                                   // 平均分布：当日换手量在 high~low 均摊
-      else if (b.high === b.low) v = Math.abs(p - b.high) < step ? 1 : 0;   // 一字板堆单档
-      else if (p <= peak) v = (p - b.low) / (peak - b.low || step);
-      else v = (b.high - p) / (b.high - peak || step);
-      w[i] = Math.max(0, v); sum += w[i];
-    }
-    if (sum > 0) for (let i = 0; i < BINS; i += 1) stock[i] += (turn * w[i]) / sum;
-    let total = 0; for (let i = 0; i < BINS; i += 1) total += stock[i];
-    total = total || 1;
-    const ratios = Array.from(stock, (v) => r6(v / total));
-    stats.push({ date: b.tradeDate, ...summarize(priceGrid, ratios, b.close) });
-    // 全回看窗口每天都存一份直方图，供 K 线 hover 按历史交易日联动筹码峰
-    histograms.push({ date: b.tradeDate, ratios });
-  });
-  notes.push(`筹码峰：公开接口（东财 cyq）多次空响应，改为基于真实日 K + 换手率按${SHAPE === 'uniform' ? '平均' : '三角形'}成本分布模型自行计算；三角分布峰值取当日成交均价（成交额/成交量，一字板回退四价均价），价格域 ${BINS} 档、回看 ${LOOKBACK} 日、历史换手衰减系数 ${DECAY}，存量按 (1-换手率×衰减系数) 折损。分位数取 COST(5/95/15/85/50)，集中度 =(高-低)/(高+低) 为同花顺面板口径（非通达信 SCR 的再除 2 版本）。参数可用 --chips-bins / --chips-lookback / --chips-decay / --chips-shape 配置。`);
-  return {
-    symbol: SYMBOL, adjust: 'qfq', algorithm: `${SHAPE}-cost-distribution`,
-    // 交易所不发布持仓成本；筹码分布是软件按历史成交/换手率反推的估算模型
-    source: 'estimated-model', estimated: true,
-    bins: BINS, lookback: LOOKBACK, priceGrid,
-    peakSource: 'vwap', decay: DECAY, shape: SHAPE,
-    concentrationBasis: 'panel (high-low)/(high+low), not SCR/2',
-    dates: stats.map((s) => s.date), stats, histograms,
-    current: stats[stats.length - 1],
-    currentHistogram: histograms[histograms.length - 1],
-  };
 }
 
 // 竞价图节点口径（开盘 / 尾盘共用）：同花顺等终端每 9 秒一个撮合结果节点；
@@ -527,10 +386,8 @@ function buildDepth(bars, iso) {
 // ---------------------------------------------------------------- 执行
 const bars = buildBars();
 const { iso, points: intraday } = buildIntraday();
-const intradayMulti = buildIntradayMulti(bars, intraday, 5);
 const tradeDates = bars.slice(-5).map((b) => b.tradeDate);
 const preCloseByDate = Object.fromEntries(bars.slice(-5).map((b) => [b.tradeDate, b.preClose]));
-const chips = buildChips(bars, CHIPS_OPTS);
 const auction = buildAuction(bars, intraday, iso);
 const closingAuction = buildClosingAuction(bars, intraday, iso);
 const trades = buildTrades(intraday, iso);
@@ -574,8 +431,6 @@ const manifest = {
   files: {
     bars: 'bars_1d.json',
     intraday: `intraday_${iso.replace(/-/g, '')}.json`,
-    intradayMulti: 'intraday_5d.json',   // 5 日扁平分时，每点带 tradeDate；切换天数时由组件取最后 N 日
-    chips: `chips_${iso.replace(/-/g, '')}.json`,
     auction: `auction_${iso.replace(/-/g, '')}.json`,
     trades: `trades_${iso.replace(/-/g, '')}.json`,
     depth: `depth_${iso.replace(/-/g, '')}.json`,
@@ -591,14 +446,9 @@ const manifest = {
   provenance: {
     bars: { availability: 'public-eod', source: 'real-kline + injected-demo', licensed: false },
     intraday: { availability: 'vendor-minute', source: 'real-intraday', licensed: false },
-    intradayMulti: { availability: 'partly-unavailable', source: '1 real day + 4 simulated days', licensed: false },
-    chips: { availability: 'estimated-model', source: 'derived-from-bars', licensed: false },
     auction: { availability: 'l1-intraday-only', source: 'illustrative + anchored-real endpoints', licensed: false },
     trades: { availability: 'level2-licensed', source: 'mock', licensed: true },
     depth: { availability: 'level2-licensed', source: 'mock', licensed: true },
-    orders: { availability: 'level2-licensed', source: 'mock', licensed: true },
-    depthFull: { availability: 'level2-licensed', source: 'mock', licensed: true },
-    depthScenarios: { availability: 'level2-licensed', source: 'mock', licensed: true },
   },
   generatedAt,
 };
@@ -611,8 +461,6 @@ const out = (name, obj) => {
 out('manifest.json', manifest);
 out('bars_1d.json', bars);
 out(`intraday_${suffix}.json`, intraday);
-out('intraday_5d.json', intradayMulti);
-out(`chips_${suffix}.json`, chips);
 out(`auction_${suffix}.json`, [...auction, ...closingAuction]);   // phase: open(69) + close(21)
 out(`trades_${suffix}.json`, trades);
 out(`depth_${suffix}.json`, depth);
@@ -625,7 +473,7 @@ for (const f of ['em_kline_qfq.json', 'em_kline_raw.json', 'hist_intraday.json',
   if (existsInRaw(f)) copyFileSync(path.join(rawDir, f), path.join(rawCopyDir, f));
 }
 
-const failed = ['em_cyq.json', 'em_depth.json'].filter((f) => !existsInRaw(f));
+const failed = ['em_depth.json'].filter((f) => !existsInRaw(f));
 const sourcesMd = [
   '# 示例数据来源说明',
   '',
@@ -639,9 +487,20 @@ const sourcesMd = [
   '',
   ...notes.filter((n) => n.includes('多次空响应') || n.includes('空响应') || n.includes('只给 3 秒') || n.includes('未返回')),
   '',
-  `- 筹码分布接口 \`em_cyq.json\`、十档盘口接口 \`em_depth.json\` 采集结果：${failed.length ? '空响应' : '有响应但未采用'}。`,
+  `- 十档盘口接口 \`em_depth.json\` 采集结果：${failed.length ? '空响应' : '有响应但未采用'}；筹码分布不依赖公开接口，由真实日 K 在运行时派生（见下）。`,
   '- 所有 mock 使用固定种子 `mulberry32(20261113)`，重复运行 `build-sample-data.mjs` 输出完全一致；`build-order-book.mjs` 用独立种子 `mulberry32(2026111302)`。',
   '- 原始数据回退链：`.tmp-raw/hist_intraday.json`（规范名）→ `.tmp-raw/tx_minute.json`（旧名备份）→ `src/data/raw/` 归档副本。`npm run fetch` 一次抓取会同时写规范名与旧名；腾讯分时接口常返回空，归档副本保证 `npm run data` 在离线/无抓取结果时仍可完整重跑。',
+  '',
+  '## 运行时派生数据集（非落盘输入）',
+  '',
+  '以下 4 个数据集**由 src/algorithms 在运行时派生**，不再写盘为独立 JSON、也不再是输入：',
+  '',
+  '- `chips` ← `src/algorithms/chip-distribution.ts`（真实日 K + 换手率的成本分布估算模型）；',
+  '- `intradayMulti` ← `src/algorithms/intraday-multi.ts`（末日真实分时 + 前 4 日按当日日 K 拟真，量额锚定日 K）；',
+  '- `depthFull` ← `src/algorithms/order-book.ts`（由 `orders` 委托流回放聚合，前十档与 `depth` 快照闭合）；',
+  '- `depthScenarios` ← `src/algorithms/depth-scenarios.ts`（普通 / 涨停 / 跌停场景）。',
+  '',
+  '派生入口为 `src/core/derive-dataset.ts`，以 L0 输入（bars / intraday / manifest 与 auction / trades / depth / orders 四份 Level-2 示意数据）调用上述纯函数。因此 `manifest.files` 与 `manifest.provenance` 只登记 6 个落盘输入：`bars / intraday / auction / trades / depth / orders`。',
   '',
   '## 原始数据留档',
   '',
@@ -660,5 +519,5 @@ const sourcesMd = [
 ].join('\n');
 writeFileSync(path.join(dataDir, 'SOURCES.md'), sourcesMd);
 
-console.log(`\n日 K ${bars.length} 根 | 分时 ${intraday.length} 点 | 筹码 ${chips.bins} 档/${chips.stats.length} 日 | 开盘竞价 ${auction.length} 点 + 尾盘竞价 ${closingAuction.length} 点 | 逐笔 ${trades.length} 条 | 盘口 ${depth.length} 快照`);
-console.log('数据生成完成。');
+console.log(`\n日 K ${bars.length} 根 | 分时 ${intraday.length} 点 | 开盘竞价 ${auction.length} 点 + 尾盘竞价 ${closingAuction.length} 点 | 逐笔 ${trades.length} 条 | 盘口 ${depth.length} 快照`);
+console.log('数据生成完成（chips / intradayMulti / depthFull / depthScenarios 由 src/algorithms 运行时派生，不再落盘）。');

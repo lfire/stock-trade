@@ -1,18 +1,8 @@
 /**
- * 数据生成脚本共用的纯工具（无副作用，可被测试直接 import）。
- * 之前 r2 / mulberry32 在 4 个脚本各写一份，现统一到单一真源。
+ * 数据生成脚本共用纯工具：薄重导出层（数据分层）。
+ * 单一真源 src/algorithms/rounding.ts、src/algorithms/random.ts（tsc 产物 dist/algorithms/）。
+ * 与 limit-rules.mjs / auction-match.mjs 一同只保留原有导出名与签名，
+ * 生成脚本与回归测试仍按原路径 import，避免与 dist 版本重复实现。
  */
-export const r2 = (n) => Math.round(n * 100) / 100;
-export const r6 = (n) => Math.round(n * 1e6) / 1e6;
-
-/** 固定种子 PRNG：保证每次生成的 mock 完全一致；不同数据集用不同种子互不干扰 */
-export function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a = (a + 0x6D2B79F5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export { r2, r6 } from '../dist/algorithms/rounding.js';
+export { mulberry32 } from '../dist/algorithms/random.js';

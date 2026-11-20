@@ -8,12 +8,12 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   CHART_EVENTS, emitEvent,
-} from '../../src/events.js';
-import { vStockChart, bindStockChart } from '../../src/frameworks/vue.js';
+} from '../../dist/events.js';
+import { vStockChart, bindStockChart } from '../../dist/frameworks/vue.js';
 import { r2, r6, mulberry32 } from '../shared.mjs';
-import { PALETTE, createPalette } from '../../src/types.js';
-import { ChartContext } from '../../src/core/chart-context.js';
-import * as pure from '../../src/pure.js';
+import { PALETTE, createPalette } from '../../dist/types.js';
+import { ChartContext } from '../../dist/core/chart-context.js';
+import * as pure from '../../dist/pure.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const rd = (p) => readFileSync(`${root}${p}`, 'utf8');
@@ -51,11 +51,12 @@ test('P1-2 事件名集中登记，emitEvent 统一 bubbles + composed', () => {
 
 test('P1-2 全仓只有 events.js 直接构造 CustomEvent；单位事件单一派发源', () => {
   const all = readdirSync(`${root}src`, { recursive: true })
-    .filter((f) => typeof f === 'string' && f.endsWith('.js') && !f.startsWith('data/'));
+    .filter((f) => typeof f === 'string' && f.endsWith('.ts')
+      && !f.endsWith('.d.ts') && !f.startsWith('data/'));
   const direct = all.filter((f) => rd(`src/${f}`).includes('new CustomEvent('));
-  assert.deepEqual(direct, ['events.js']);
-  const book = rd('src/elements/depth-book.js');
-  const chart = rd('src/elements/stock-chart.js');
+  assert.deepEqual(direct, ['events.ts']);
+  const book = rd('src/elements/depth-book.ts');
+  const chart = rd('src/elements/stock-chart.ts');
   assert.ok(book.includes('DEPTH_UNIT_REQUEST') && !book.includes("'depth-unit-change'"),
     '十档盘口仍直接派发 depth-unit-change');
   assert.ok(chart.includes('DEPTH_UNIT_CHANGE'), '根容器未统一派发 depth-unit-change');
@@ -114,7 +115,7 @@ test('P1-4 生成脚本共用 shared.mjs 与 market-constants', () => {
 });
 
 test('P1-4 getSeries() 收盘时刻取自 manifest.session', () => {
-  const src = rd('src/core/chart-context.js');
+  const src = rd('src/core/chart-context.ts');
   assert.ok(src.includes('manifest?.session?.at?.(-1)?.close'), 'getSeries 未读 manifest.session');
   const ctx = Object.create(ChartContext.prototype);
   const pts = [
@@ -130,7 +131,7 @@ test('P1-4 getSeries() 收盘时刻取自 manifest.session', () => {
 });
 
 test('P1-4 复权标签取自 manifest.adjust', () => {
-  const src = rd('src/elements/price-pane.js');
+  const src = rd('src/elements/price-pane.ts');
   assert.ok(src.includes("qfq: '前复权'") && src.includes('manifest?.adjust'));
   assert.ok(!src.includes('`K线(前复权)'), '仍写死前复权');
 });
@@ -151,12 +152,12 @@ test('P2-5 generatedAt 可复现、floatShares 有来源', () => {
 // ---- P2-6 废弃 API / 命名 / PALETTE ----
 test('P2-6 废弃 API 已移除，均线写入口收敛', () => {
   assert.equal(pure.adaptiveMACDParams, undefined, 'adaptiveMACDParams 未移除');
-  assert.ok(!rd('src/gl/renderer.js').includes('export const CLEAR'), 'CLEAR 未移除');
-  const ctxSrc = rd('src/core/chart-context.js');
-  const chartSrc = rd('src/elements/stock-chart.js');
-  assert.ok(ctxSrc.includes('setMovingAverages(list)'));
+  assert.ok(!rd('src/gl/renderer.ts').includes('export const CLEAR'), 'CLEAR 未移除');
+  const ctxSrc = rd('src/core/chart-context.ts');
+  const chartSrc = rd('src/elements/stock-chart.ts');
+  assert.ok(ctxSrc.includes('setMovingAverages(list'), 'core 缺少均线单一写入口');
   assert.ok(!ctxSrc.includes('setMA(') && !chartSrc.includes('.setMA('), '仍残留 setMA 命名');
-  assert.ok(rd('src/index.d.ts').includes('setMovingAverages'), '声明缺公开方法');
+  assert.ok(rd('dist/elements/stock-chart.d.ts').includes('setMovingAverages'), '生成的声明缺公开方法');
 });
 
 test('P2-6 createPalette() 是纯函数，不改动全局 PALETTE', () => {
@@ -168,5 +169,5 @@ test('P2-6 createPalette() 是纯函数，不改动全局 PALETTE', () => {
   assert.equal(PALETTE.up, before.up);
   const withBase = createPalette({}, { up: '#AAAAAA', down: '#BBBBBB' });
   assert.equal(withBase.up, '#AAAAAA');
-  assert.ok(rd('src/types.js').includes('@deprecated 会就地改动全局 PALETTE'));
+  assert.ok(rd('src/types.ts').includes('@deprecated 会就地改动全局 PALETTE'));
 });

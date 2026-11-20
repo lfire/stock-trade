@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { limitPrices, limitRateFor } from './limit-rules.mjs';
 import { r2, mulberry32 } from './shared.mjs';
-import { TIME } from '../src/core/market-constants.js';
+import { TIME } from '../dist/core/market-constants.js';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -197,99 +197,7 @@ orders.sort((a, b) => (T(a.time) - T(b.time)) || (a.ordId < b.ordId ? -1 : 1));
 const out = path.join(dir, `orders_${m.tradeDate.replace(/-/g, '')}.json`);
 writeFileSync(out, `${JSON.stringify(orders, null, 0)}\n`);
 
-// ---------------------------------------------------------------- 3. 全景盘口（回放委托流）
-// 真实 Level-2 的做法：行情商用逐笔委托消息重建完整委托簿（order book），
-// 快照只是该簿按价格聚合的当前状态，不是独立生成的数据。
-//   NEW 入簿 → FILL 按成交价从剩余量扣减 → CANCEL 撤掉剩余量；只有被市价穿越才整笔离场。
-//   真实委托簿不会因「挂太久」自动撤单，所以低价买单 / 高价卖单会一直留存，
-//   盘口因此覆盖「买：现价 → 跌停价」「卖：现价 → 涨停价」的全价格区间。
-const live = new Map();   // 原委托号 -> { side, price, remain, t }
-for (const o of orders) {
-  const t = T(o.time), mid = midAt(t);
-  for (const [id, x] of live) {
-    if ((x.side === 'B' && x.price >= mid) || (x.side === 'S' && x.price <= mid)) live.delete(id);
-  }
-  if (o.action === 'NEW') live.set(o.ordId, { side: o.side, price: o.price, remain: o.volume, t });
-  else if (o.action === 'FILL' && live.has(o.origOrdId)) {
-    const x = live.get(o.origOrdId);
-    x.remain -= o.volume;
-    if (x.remain <= 0) live.delete(o.origOrdId);
-  } else if (o.action === 'CANCEL') live.delete(o.origOrdId);
-}
-const agg = new Map();
-for (const x of live.values()) {
-  if (x.remain <= 0) continue;
-  const k = `${x.side}:${x.price.toFixed(2)}`;
-  const cur = agg.get(k) || { side: x.side, price: x.price, volume: 0, orderCount: 0 };
-  cur.volume += x.remain; cur.orderCount += 1;   // 只聚合未成交未撤的剩余量
-  agg.set(k, cur);
-}
-// 与既有十档快照保持口径一致：同价格档位用快照值覆盖
-for (const lv of snapLevels) {
-  agg.set(`${lv.side}:${lv.price.toFixed(2)}`, {
-    side: lv.side, price: lv.price, volume: lv.volume, orderCount: lv.orderCount,
-  });
-}
-const bids = [...agg.values()].filter((x) => x.side === 'B').sort((a, b) => b.price - a.price);
-const asks = [...agg.values()].filter((x) => x.side === 'S').sort((a, b) => a.price - b.price);
-const pano = {
-  timestamp: depth.timestamp,
-  time: TIME.CLOSE,
-  // 全景委托簿 / 逐笔委托属交易所 Level-2 增值行情，真实数据需展示或非展示许可
-  source: 'mock', license: 'public-demo', requiresAuthorization: true,
-  mid: r2(midAt(CLOSE)),
-  limitDown: limitLo,
-  limitUp: limitHi,
-  bids: bids.map(({ price, volume, orderCount }) => ({ price, volume, orderCount })),
-  asks: asks.map(({ price, volume, orderCount }) => ({ price, volume, orderCount })),
-};
-const panoOut = path.join(dir, `depth_full_${m.tradeDate.replace(/-/g, '')}.json`);
-writeFileSync(panoOut, `${JSON.stringify(pano)}\n`);
-
-// ---------------------------------------------------------------- 4. 涨停 / 跌停场景
-// 真实涨跌停时一侧无挂单：涨停无卖盘、买1 为涨停价封单；跌停无买盘、卖1 为跌停价封单。
-const seal = (price, volume, orderCount) => ({ price, volume, orderCount });
-const mkDepth = (state) => {
-  if (state === 'limitUp') {
-    const bids = Array.from({ length: 10 }, (_, i) => seal(
-      r2(limitHi - i * 0.01),
-      i === 0 ? 1280000 : Math.max(100, Math.round((26000 - i * 2300) / 100) * 100),
-      i === 0 ? 860 : 12 + i * 3,
-    ));
-    return { ...depth, bids, asks: [], limitState: 'limitUp', limitPrice: limitHi };
-  }
-  const asks = Array.from({ length: 10 }, (_, i) => seal(
-    r2(limitLo + i * 0.01),
-    i === 0 ? 960000 : Math.max(100, Math.round((24000 - i * 2100) / 100) * 100),
-    i === 0 ? 720 : 11 + i * 3,
-  ));
-  return { ...depth, bids: [], asks, limitState: 'limitDown', limitPrice: limitLo };
-};
-const mkPano = (state) => {
-  if (state === 'limitUp') {
-    return {
-      ...pano, mid: limitHi, limitState: 'limitUp',
-      bids: [seal(limitHi, 1280000, 860), ...pano.bids.filter((d) => d.price < limitHi)],
-      asks: [],
-    };
-  }
-  return {
-    ...pano, mid: limitLo, limitState: 'limitDown',
-    bids: [],
-    asks: [seal(limitLo, 960000, 720), ...pano.asks.filter((d) => d.price > limitLo)],
-  };
-};
-// 场景对象的键即场景名（normal/limitUp/limitDown），不额外加顶层元数据以免破坏按 key 索引；
-// 来源与授权边界统一见 manifest.provenance 与 SOURCES.md，内层 pano 自带 source/license。
-const scenarios = {
-  normal: { label: '普通', depth, pano },
-  limitUp: { label: '涨停', depth: mkDepth('limitUp'), pano: mkPano('limitUp') },
-  limitDown: { label: '跌停', depth: mkDepth('limitDown'), pano: mkPano('limitDown') },
-};
-const scenarioOut = path.join(dir, `depth_scenarios_${m.tradeDate.replace(/-/g, '')}.json`);
-writeFileSync(scenarioOut, `${JSON.stringify(scenarios)}\n`);
-
-// ---------------------------------------------------------------- 5. 合并分笔 ↔ 委托号关联
+// ---------------------------------------------------------------- 3. 合并分笔 ↔ 委托号关联
 // trades 是分钟级合并分笔（聚合粒度），真实逐笔明细才带买卖双方委托号；
 // 这里把同一分钟内发生部分成交的委托号挂到合并分笔上，形成可追溯的关联（幂等重写）。
 const tradesFile = path.join(dir, m.files.trades);
@@ -306,26 +214,28 @@ for (const tr of trades) {
 }
 writeFileSync(tradesFile, `${JSON.stringify(trades)}\n`);
 
-// build-sample-data 重跑会覆盖 manifest，这里幂等补回三个派生数据文件的登记
+// build-sample-data 重跑会覆盖 manifest，这里幂等补回 orders 键（files + provenance）；
+// depthFull / depthScenarios 已改为运行时派生，不再写盘、不再登记。
 const manifestFile = path.join(dir, 'manifest.json');
 const meta = JSON.parse(readFileSync(manifestFile, 'utf8'));
-const derived = { orders: out, depthFull: panoOut, depthScenarios: scenarioOut };
+const ordersFile = path.basename(out);
 let metaChanged = false;
-for (const [k, file] of Object.entries(derived)) {
-  const v = path.basename(file);
-  if (meta.files[k] !== v) { meta.files[k] = v; metaChanged = true; }
+if (meta.files.orders !== ordersFile) { meta.files.orders = ordersFile; metaChanged = true; }
+if (!meta.provenance.orders) {
+  meta.provenance.orders = { availability: 'level2-licensed', source: 'mock', licensed: true };
+  metaChanged = true;
 }
 if (metaChanged) writeFileSync(manifestFile, `${JSON.stringify(meta)}\n`);
 
-// 幂等追加：让 SOURCES.md 覆盖由本脚本生成的 3 个派生数据集（build-sample-data 只写 7 个）
+// 幂等追加：让 SOURCES.md 覆盖本脚本写盘的 orders（build-sample-data 只写 5 个落盘输入）
 const sourcesFile = path.join(dir, 'SOURCES.md');
 const derivedNote = `<!-- derived-data -->
 ## 派生数据集与 Level-2 授权边界（build-order-book.mjs）
 
-- \`orders\`（逐笔委托 NEW/FILL/CANCEL）、\`depthFull\`（全景委托簿）、\`depthScenarios\`（普通/涨停/跌停场景）均为**确定性 mock**，固定种子 \`mulberry32(2026111302)\`。公开接口无历史 Level-2 逐笔委托（见 \`src/data/raw/em_order_attempt.json\`）。
+- \`orders\`（逐笔委托 NEW/FILL/CANCEL）是本脚本写盘的**确定性 mock** 落盘输入，固定种子 \`mulberry32(2026111302)\`；与 \`auction\` / \`trades\` / \`depth\` 同为 Level-2 示意数据，统一登记在 \`manifest.files\` / \`manifest.provenance\`。公开接口无历史 Level-2 逐笔委托（见 \`src/data/raw/em_order_attempt.json\`）。本脚本还把同一分钟内部分成交的委托号幂等关联到合并分笔 \`trades.ordIds\`。
 - **数据可获得性**：按《证券交易所管理办法》第 38 条与沪深交易规则 5.1.3，交易所法定公开的是日频行情表与集合竞价即时行情（参考价/匹配量/未匹配量）；**十档盘口、逐笔明细、逐笔委托属 Level-2 增值行情**，真实数据需向上证所信息网络 / 深圳证券信息申请展示或非展示许可，且不得自行复制、转发或开发衍生品。本项目示例数据 \`license: 'public-demo'\`、\`requiresAuthorization: true\`，**非真实行情**。
-- \`depthFull\` 由 \`orders\` 事件流回放聚合，前十档用 \`depth\` 快照覆盖；\`depthScenarios\` 的封单量为硬编码示意值。
-- 逐数据集来源与授权摘要统一登记在 \`manifest.provenance\`，供消费者一次读取。
+- \`chips\` / \`intradayMulti\` / \`depthFull\` / \`depthScenarios\` 由 src/algorithms 在运行时派生，不落盘、不作为输入，详见上文「运行时派生数据集」。
+- 逐数据集来源与授权摘要统一登记在 \`manifest.provenance\`（6 个落盘输入），供消费者一次读取。
 
 <!-- /derived-data -->`;
 if (existsSync(sourcesFile)) {
@@ -340,5 +250,4 @@ if (existsSync(sourcesFile)) {
 
 const active = orders.filter((o) => o.snapshot);
 console.log(`挂单数据：${orders.length} 条（收盘存活 ${active.length} 条）| NEW ${orders.filter((o) => o.action === 'NEW').length} / FILL ${orders.filter((o) => o.action === 'FILL').length} / CANCEL ${orders.filter((o) => o.action === 'CANCEL').length} | 合并分笔已关联 ${trades.filter((t) => t.ordIds?.length).length}/${trades.length} 条`);
-console.log(`全景盘口：买 ${bids.length} 档 / 卖 ${asks.length} 档 | 中间价 ${pano.mid}`);
-console.log(`输出 ${out} / ${panoOut} / ${scenarioOut}`);
+console.log(`输出 ${out}（depthFull / depthScenarios 由 src/algorithms 运行时派生，不再写盘）`);

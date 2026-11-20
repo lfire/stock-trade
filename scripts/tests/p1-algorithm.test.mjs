@@ -9,9 +9,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { matchAuction, makeOrderBook } from '../auction-match.mjs';
 import { limitRateFor, limitPrices, limitStateOf, PRICE_EPS } from '../limit-rules.mjs';
+import { loadDerived } from './derived-fixture.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const chips = JSON.parse(readFileSync(`${root}src/data/chips_20261113.json`, 'utf8'));
+const { derived } = loadDerived();
+const chips = derived.chips;
 const auction = JSON.parse(readFileSync(`${root}src/data/auction_20261113.json`, 'utf8'));
 const manifest = JSON.parse(readFileSync(`${root}src/data/manifest.json`, 'utf8'));
 const bars = JSON.parse(readFileSync(`${root}src/data/bars_1d.json`, 'utf8'));
@@ -36,14 +38,15 @@ test('撮合：取可实现最大成交量的价格', () => {
 });
 
 test('撮合：并列价取未成交量最小者，仍并列取最接近参考价', () => {
-  // 场景 A：p=10.00 与 p=10.02 的可成交量同为 100，但 p=10.02 的未成交量为 0 更小，
-  // 应优先于「最接近前收」的 p=10.00
+  // 场景 A：候选价已扩展到申报价之间的 0.01 步长中间价。
+  // p=10.00/10.01/10.02 成交量同为 100，10.01/10.02 未成交量同为 0，
+  // 按上交所「仍并列取中间价 / 最接近参考价」应取 10.01（旧实现只取申报价会误取 10.02）。
   const a = matchAuction(
     [{ price: 10.02, qty: 100 }, { price: 10.00, qty: 20 }],
     [{ price: 10.00, qty: 100 }], 10.00);
   assert.equal(a.matchedQty, 100);
   assert.equal(a.unmatchedQty, 0);
-  assert.equal(a.price, 10.02);
+  assert.equal(a.price, 10.01);
   // 场景 B：两侧都只有单一价位，可成交量与未成交量完全相同 → 取最接近前收的价格
   const b = matchAuction([{ price: 10.02, qty: 100 }], [{ price: 10.00, qty: 100 }], 10.00);
   assert.equal(b.matchedQty, 100);

@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { ChartContext } from '../../src/core/chart-context.js';
+import { ChartContext } from '../../dist/core/chart-context.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const P = ChartContext.prototype;
@@ -135,15 +135,15 @@ test('readonlyFacade()：冻结、状态浅拷贝、不暴露内部可变对象�
 });
 
 test('getContext() 返回只读门面；组件层 0 处绕过 setter 直接写 ctx', () => {
-  const chartSrc = readFileSync(`${root}src/elements/stock-chart.js`, 'utf8');
+  const chartSrc = readFileSync(`${root}src/elements/stock-chart.ts`, 'utf8');
   assert.ok(chartSrc.includes('this.ctx.readonlyFacade()'), 'getContext 仍返回可变 ctx');
   assert.ok(!chartSrc.includes('getContext() { return this.ctx; }'));
-  for (const file of ['stock-chart.js', 'price-pane.js', 'indicator-pane.js', 'chip-pane.js']) {
+  for (const file of ['stock-chart.ts', 'price-pane.ts', 'indicator-pane.ts', 'chip-pane.ts']) {
     const src = readFileSync(`${root}src/elements/${file}`, 'utf8');
     const writes = [...src.matchAll(/(?:this\.)?ctx\.[A-Za-z_][A-Za-z0-9_]*\s*=(?!=)/g)]
       .map((m) => m[0]).filter((s) => !s.includes('=>'));
     assert.equal(writes.length, 0, `${file} 仍有直接写 ctx：${writes.join(', ')}`);
   }
-  const paneSrc = readFileSync(`${root}src/elements/price-pane.js`, 'utf8');
+  const paneSrc = readFileSync(`${root}src/elements/price-pane.ts`, 'utf8');
   assert.ok(paneSrc.includes('ctx.setPriceScale('), 'price-pane 未走受控 setter');
 });

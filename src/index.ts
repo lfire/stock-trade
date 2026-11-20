@@ -1,0 +1,46 @@
+/**
+ * 组件库注册入口。
+ *
+ * 各 elements 模块只导出 class，import 时不再产生 customElements.define 副作用；
+ * 显式调用 defineAll() 才注册全局标签，便于按需引入、多版本共存与隔离测试。
+ * 需要纯计算能力而不想触碰 DOM 时，请改用 'stock-chart/pure' 子入口（源码 ./pure.ts）。
+ */
+import { StockChart } from './elements/stock-chart';
+import { PricePane } from './elements/price-pane';
+import { IndicatorPane } from './elements/indicator-pane';
+import { ChipPane } from './elements/chip-pane';
+import { AuctionPane } from './elements/auction-pane';
+import { TradeTape } from './elements/trade-tape';
+import { DepthBook } from './elements/depth-book';
+
+export {
+  StockChart, PricePane, IndicatorPane, ChipPane, AuctionPane, TradeTape, DepthBook,
+};
+export { SUBPLOT_INDICATORS } from './elements/stock-chart';
+export { PALETTE, THEMES, LAYOUT, resolveTheme, createPalette, applyPalette, resetPalette, withPalette } from './types';
+export { bindStockChart } from './frameworks/react';
+export { CHART_EVENTS, emitEvent } from './events';
+export * from './pure';
+/** 对外公开的全部数据类型由 tsc 自动生成到 dist/types.d.ts，并由根入口重导出 */
+export type * from './types';
+
+const ELEMENTS = {
+  'stock-chart': StockChart,
+  'price-pane': PricePane,
+  'indicator-pane': IndicatorPane,
+  'chip-pane': ChipPane,
+  'auction-pane': AuctionPane,
+  'trade-tape': TradeTape,
+  'depth-book': DepthBook,
+};
+
+export const ELEMENT_TAGS = Object.keys(ELEMENTS);
+
+/** @param {CustomElementRegistry} [registry] 可注入自定义 registry 便于测试隔离 */
+export function defineAll(registry?: CustomElementRegistry): string[] {
+  const r = registry || customElements;
+  for (const tag of ELEMENT_TAGS) {
+    if (!r.get(tag)) r.define(tag, (ELEMENTS as Record<string, CustomElementConstructor>)[tag]);
+  }
+  return ELEMENT_TAGS.slice();
+}

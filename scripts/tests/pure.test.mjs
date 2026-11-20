@@ -2,8 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sma, ema, macd, kdj, rgba, rect, DEFAULT_MACD_PARAMS,
-  resolveMACDParams, parseMACDParams } from '../../src/pure.js';
-import { LAYOUT, PALETTE, withPalette } from '../../src/types.js';
+  resolveMACDParams, parseMACDParams } from '../../dist/pure.js';
+import { LAYOUT, PALETTE, withPalette } from '../../dist/types.js';
 
 const series = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 

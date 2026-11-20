@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 import {
   rgba, sma, kdj, volumeRatio, computeIndicator,
   PRICE_TICK, PRICE_EPS, LOT_SIZE, DAY_MINUTES, SESSION_MINUTES, HALF_HOUR_MARKS,
-} from '../../src/pure.js';
+} from '../../dist/pure.js';
 import { limitPrices, limitRateFor, PRICE_EPS as RULE_EPS } from '../limit-rules.mjs';
+import { loadDerived } from './derived-fixture.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const rd = (p) => JSON.parse(readFileSync(`${root}src/data/${p}`, 'utf8'));
@@ -69,9 +70,9 @@ test('纯函数参数防御：n<=0 / NaN / 小数不产生全 NaN 结果', () =>
   assert.equal(computeIndicator('MA', bars, { n: 5 }).values[4].value, 12.5);
 });
 
-test('数据可获得性：manifest.provenance 覆盖全部 10 个数据集并标注授权边界', () => {
+test('数据可获得性：manifest.provenance 覆盖全部 6 个 L0 输入并标注授权边界', () => {
   const keys = Object.keys(manifest.files);
-  assert.equal(keys.length, 10);
+  assert.equal(keys.length, 6);
   assert.ok(manifest.provenance, 'manifest 缺少 provenance 摘要');
   for (const k of keys) {
     const p = manifest.provenance[k];
@@ -79,13 +80,14 @@ test('数据可获得性：manifest.provenance 覆盖全部 10 个数据集并�
     assert.ok(p.availability && p.source && typeof p.licensed === 'boolean', `${k} 字段不全`);
   }
   // Level-2 数据集必须标为需授权
-  for (const k of ['trades', 'depth', 'orders', 'depthFull', 'depthScenarios']) {
+  for (const k of ['trades', 'depth', 'orders']) {
     assert.equal(manifest.provenance[k].availability, 'level2-licensed', k);
     assert.equal(manifest.provenance[k].licensed, true, k);
   }
-  assert.equal(manifest.provenance.chips.availability, 'estimated-model');
   assert.equal(manifest.provenance.auction.availability, 'l1-intraday-only');
-  assert.equal(manifest.provenance.intradayMulti.availability, 'partly-unavailable');
+  assert.ok(!manifest.files.chips && !manifest.files.intradayMulti
+    && !manifest.files.depthFull && !manifest.files.depthScenarios,
+  '运行时派生数据集仍被登记为落盘输入');
 });
 
 test('数据体来源标注：竞价示意点、多日拟真点、L2 授权字段齐备', () => {
@@ -98,7 +100,8 @@ test('数据体来源标注：竞价示意点、多日拟真点、L2 授权字�
   assert.equal(closeA.at(-1).source, 'anchored-real');
   assert.ok(auction.every((p) => p.priceBasis === 'SSE-3.5.2-max-volume'));
 
-  const multi = rd(manifest.files.intradayMulti);
+  const { derived } = loadDerived();
+  const multi = derived.intradayMulti;
   const byDate = new Set(multi.map((p) => p.tradeDate));
   assert.equal(byDate.size, 5);
   const first = [...byDate][0];
@@ -109,7 +112,7 @@ test('数据体来源标注：竞价示意点、多日拟真点、L2 授权字�
   assert.ok(trades.every((t) => t.license === 'public-demo' && t.requiresAuthorization === true));
   const depth = rd(manifest.files.depth);
   assert.ok(depth.every((d) => d.source === 'mock' && d.requiresAuthorization === true));
-  const chips = rd(manifest.files.chips);
+  const chips = derived.chips;
   assert.equal(chips.source, 'estimated-model');
   assert.equal(chips.estimated, true);
   assert.equal(chips.peakSource, 'vwap');

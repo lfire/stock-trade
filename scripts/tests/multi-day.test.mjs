@@ -6,12 +6,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { intradayVolumeRatioSeries, elapsedMarketMinutes } from '../../src/pure.js';
+import { intradayVolumeRatioSeries, elapsedMarketMinutes } from '../../dist/pure.js';
+import { loadDerived } from './derived-fixture.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const manifest = JSON.parse(readFileSync(`${root}src/data/manifest.json`, 'utf8'));
-const single = JSON.parse(readFileSync(`${root}src/data/${manifest.files.intraday}`, 'utf8'));
-const multi = JSON.parse(readFileSync(`${root}src/data/intraday_5d.json`, 'utf8'));
+const { manifest, derived } = loadDerived();
+const single = derived.intraday;
+const multi = derived.intradayMulti;
 
 test('多日分时：5 个交易日 × 242 点，每点带 tradeDate、无盘后点', () => {
   assert.equal(multi.length, 5 * 242);

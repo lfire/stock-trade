@@ -17,7 +17,7 @@ import {
   ema, macd, kdj, volumeRatio, intradayVolumeRatio,
   elapsedMarketMinutes, intradayVolumeRatioSeries,
   aggregateIntraday, intradayBucket, PERIODS, DEFAULT_PERIOD, periodMeta, buildBars,
-} from '../../src/pure.js';
+} from '../../dist/pure.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const bars = JSON.parse(readFileSync(`${root}src/data/bars_1d.json`, 'utf8'));
