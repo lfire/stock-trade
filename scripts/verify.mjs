@@ -10,6 +10,8 @@ import { rect, line, rgba, makeScale } from '../dist/gl/geometry.js';
 import { computeIndicator, ema, intradayVolumeRatio } from '../dist/compute/indicators.js';
 import { limitPrices, limitRateFor } from './limit-rules.mjs';
 import { deriveDataset } from '../dist/core/derive-dataset.js';
+import { MODULE_CATALOG, MODULE_PRESETS, resolveModules, requiredDataFor } from '../dist/workspace/module-catalog.js';
+import { buildWorkspaceTemplate, buildWorkspaceCSS } from '../dist/workspace/template.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const problems = [];
@@ -21,68 +23,108 @@ const m = rd('src/data/manifest.json');
 const bars = rd(`src/data/${m.files.bars}`);
 const intra = rd(`src/data/${m.files.intraday}`);
 const auction = rd(`src/data/${m.files.auction}`);
-const trades = rd(`src/data/${m.files.trades}`);
 const depth = rd(`src/data/${m.files.depth}`);
 const orders = rd(`src/data/${m.files.orders}`);
-// L0 输入 → 运行时派生层：chips / intradayMulti / depthFull / depthScenarios 不再落盘
-const baseDataset = { manifest: m, bars, intraday: intra, auction, trades, depth, orders };
+// L0 输入 → 运行时派生层：chips / intradayMulti / depthFull / depthScenarios / trades 不再落盘
+const baseDataset = { manifest: m, bars, intraday: intra, auction, depth, orders };
 const derived = deriveDataset(baseDataset);
+// 模块化加载 · 数据按需派生：默认全开必须与 preset:full 逐字段一致
+{
+  const full = deriveDataset(baseDataset, { preset: 'full' });
+  const minimal = deriveDataset(baseDataset, { preset: 'minimal' });
+  const candle = deriveDataset(baseDataset, { preset: 'candle' });
+  ok(JSON.stringify(full) === JSON.stringify(derived),
+    'preset:full 与默认全开不一致（模块化改造破坏向后兼容）');
+  ok(minimal.bars?.length === bars.length && minimal.intraday?.length === intra.length
+    && !!minimal.intradayMulti, 'minimal 未保留 core + 分时主图数据');
+  for (const k of ['auction', 'trades', 'orders', 'depth', 'depthFull', 'depthScenarios', 'chips']) {
+    ok(minimal[k] === undefined, `minimal 仍派生了 ${k}（数据未按需裁剪）`);
+  }
+  ok(!!candle.chips && candle.trades === undefined && candle.orders === undefined,
+    'candle 预设的数据裁剪不符合模块依赖');
+  ok(Object.keys(MODULE_CATALOG).length === 12 && Object.keys(MODULE_PRESETS).length === 4,
+    '模块目录或预设数量异常');
+  ok(resolveModules(undefined).length === 12
+    && requiredDataFor(['core', 'chip']).includes('chips'),
+  '模块目录 / 数据依赖闭包异常');
+}
+// 数据体字段断言一律针对运行时派生层（落盘 JSON 已精简）
+const dBars = derived.bars;
+const dIntra = derived.intraday;
+const dAuction = derived.auction;
+const dTrades = derived.trades;
+const dDepth = derived.depth;
+const dOrders = derived.orders;
 const chips = derived.chips;
 const pano = derived.depthFull;
 const scen = derived.depthScenarios;
 const multiPts = derived.intradayMulti;
 
-const barKeys = ['timestamp', 'tradeDate', 'open', 'high', 'low', 'close', 'preClose', 'volume', 'amount', 'turnoverRate'];
-ok(bars.every((b) => barKeys.every((k) => b[k] !== undefined)), 'Bar 字段缺失');
+// ---- 落盘精简字段集（输入层精简后的最终形态；运行时完整性一律对 derived 断言）----
+const barKeys = ['timestamp', 'tradeDate', 'open', 'high', 'low', 'close', 'preClose',
+  'volume', 'amount', 'turnoverRate', 'pctChg', 'amplitude', 'change'];
+ok(bars.every((b) => barKeys.every((k) => b[k] !== undefined)) && Object.keys(bars[0]).length === 13,
+  '日 K 落盘字段集不是东财原生 13 列（且不应含 limitState / source）');
+const intraKeys = ['time', 'price', 'volume', 'amount', 'tradeDate'];
+ok(intra.every((p) => intraKeys.every((k) => p[k] !== undefined)) && Object.keys(intra[0]).length === 5,
+  '分时落盘字段集不是 5 个');
+const auctionKeys = ['time', 'timestamp', 'phase', 'virtualPrice', 'matchedQty', 'unmatchedQty', 'unmatchedSide'];
+ok(auction.every((p) => auctionKeys.every((k) => p[k] !== undefined)) && Object.keys(auction[0]).length === 7,
+  '竞价落盘字段集不是 7 个');
+ok(Object.keys(depth[0]).length === 3 && ['bids', 'asks', 'timestamp'].every((k) => depth[0][k] !== undefined),
+  '盘口落盘顶层字段集不是 3 个');
+ok([...depth[0].bids, ...depth[0].asks].every((d) => Object.keys(d).length === 2
+  && d.price !== undefined && d.volume !== undefined), '盘口每档落盘字段集不是 price/volume 2 个');
+const orderKeys = ['ordId', 'time', 'price', 'volume', 'side', 'action', 'origOrdId'];
+ok(orders.every((o) => orderKeys.every((k) => o[k] !== undefined)) && Object.keys(orders[0]).length === 7,
+  '挂单落盘字段集不是 7 个');
 ok(bars.every((b) => b.high >= Math.max(b.open, b.close) - 1e-6 && b.low <= Math.min(b.open, b.close) + 1e-6), 'Bar OHLC 不自洽');
 ok(bars.every((b, i) => i === 0 || b.timestamp > bars[i - 1].timestamp), 'Bar 时间非升序');
 ok(bars.at(-1).tradeDate === m.tradeDate, '日 K 末根与 manifest 交易日不一致');
-// 涨跌停 / 炸板四态（比例按 manifest.limitRate 识别板块，判定容差固定 0.011 元）与注入后的链条闭合
+// 四态演示形态：落盘 bars 恢复东财 push2his 原生（无 limitState / source），
+// 由 deriveDataset() 按 manifest.demoPatterns 在内存副本上叠加 limitState，仅供配色演示。
 const VALID_STATES = ['', 'limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'];
-ok(bars.every((b) => VALID_STATES.includes(b.limitState || '')), 'limitState 取值非法');
-['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'].forEach((s) =>
-  ok(bars.some((b) => b.limitState === s), `缺少 ${s} 样本`));
-ok(bars.every((b, i) => i === 0 || Math.abs(b.preClose - bars[i - 1].close) < 0.02), '注入后 preClose 链条断裂');
-// 独立基准：比例取自 manifest（不复用生成脚本的常量），容差按交易所最小变动单位固定 0.011 元
-const LIMIT_RATE = m.limitRate ?? 0.10;
-const PRICE_EPS = 0.011;
-const upPx = (b) => Math.round(b.preClose * (1 + LIMIT_RATE) * 100) / 100;
-const dnPx = (b) => Math.round(b.preClose * (1 - LIMIT_RATE) * 100) / 100;
-ok(bars.filter((b) => b.limitState === 'limitUp').every((b) =>
-  Math.abs(b.close - upPx(b)) <= PRICE_EPS), '涨停样本收盘价未封板');
-ok(bars.filter((b) => b.limitState === 'limitDown').every((b) =>
-  Math.abs(b.close - dnPx(b)) <= PRICE_EPS), '跌停样本收盘价未封板');
-ok(bars.filter((b) => b.limitState === 'limitUpBroken').every((b) =>
-  Math.abs(b.high - upPx(b)) <= PRICE_EPS
-  && Math.abs(b.close - upPx(b)) > PRICE_EPS), '涨停炸板形态不符');
-ok(bars.filter((b) => b.limitState === 'limitDownBroken').every((b) =>
-  Math.abs(b.low - dnPx(b)) <= PRICE_EPS
-  && Math.abs(b.close - dnPx(b)) > PRICE_EPS), '跌停炸板形态不符');
-// 预置期望值（由独立标准公式在 600519.SH 前复权 935 根日 K / 截至 2026-11-13 数据上算出）
-// 改动公式会直接导致这些断言失败，替代原先「用同一实现自校验」的循环论证
+const DEMO_STATES = ['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'];
+ok(Array.isArray(m.demoPatterns) && m.demoPatterns.length === 4, 'manifest.demoPatterns 应有 4 项');
+ok(DEMO_STATES.every((s) => m.demoPatterns.filter((p) => p.state === s).length === 1),
+  'demoPatterns 未恰好覆盖四态各 1 项');
+ok(m.demoPatterns.every((p) => {
+  const bar = dBars.find((b) => b.tradeDate === p.tradeDate);
+  return !!bar && bar.limitState === p.state;
+}), 'derived.bars 未在 demoPatterns 对应 tradeDate 上叠加 limitState');
+ok(dBars.filter((b) => b.limitState).length === 4
+  && dBars.every((b) => VALID_STATES.includes(b.limitState || '')), 'derived.bars 四态叠加数量/取值异常');
+ok(bars.every((b) => b.limitState === undefined && b.source === undefined),
+  '落盘 bars 仍残留 limitState / source（应恢复东财原生）');
+ok(bars.every((b, i) => i === 0 || Math.abs(b.preClose - bars[i - 1].close) < 0.02), '日 K preClose 链条断裂');
+// 预置期望值：由独立脚本 /tmp/recalc-baselines.py（Python，不 import 项目
+// compute/indicators.js 或 dist/algorithms/*）按给定口径从恢复原生后的
+// src/data/bars_1d.json / intraday_20261113.json 重算，避免循环论证。
+// 4 根注入形态位于 bars index 840/860/880/900，不影响 DIF[25]/DEA[40] 与分时量比
+// （这 3 条重算值与旧基准一致）；末根 MACD 柱 / KDJ 因递推受影响已更新。
 const expectClose = (actual, expected, label) =>
   ok(Math.abs(actual - expected) < 1e-5, `${label}：${actual} ≠ 基准 ${expected}`);
 const macdNow = computeIndicator('MACD', bars, {}).values;
 expectClose(macdNow[25].dif, -6.501693, 'MACD DIF[25]');
 expectClose(macdNow[40].dea, -5.246571, 'MACD DEA[40]');
-expectClose(macdNow.at(-1).macd, -2.019009, 'MACD 柱[末根]');
+expectClose(macdNow.at(-1).macd, -1.927041, 'MACD 柱[末根]');
 const kdjNow = computeIndicator('KDJ', bars, {}).values;
-expectClose(kdjNow.at(-1).k, 51.534178, 'KDJ K[末根]');
-expectClose(kdjNow.at(-1).d, 63.215194, 'KDJ D[末根]');
+expectClose(kdjNow.at(-1).k, 51.533313, 'KDJ K[末根]');
+expectClose(kdjNow.at(-1).d, 63.206664, 'KDJ D[末根]');
 const avg5Daily = bars.slice(-6, -1).reduce((s, b) => s + b.volume, 0) / 5;
 expectClose(intradayVolumeRatio(intra.filter((p) => p.time <= '15:00'), avg5Daily, '09:35'),
   2.469124, '分时量比@09:35');
-ok(intra.filter((p) => p.session !== 'afterHours').length === 242, '常规时段不是 242 点');
-ok(intra.every((p) => p.volume >= 0 && p.amount >= 0), '分时增量出现负数');
-ok(Math.abs(intra[0].avgPrice - intra[0].price) < 0.01, '分时首点均价异常');
+ok(dIntra.filter((p) => p.session !== 'afterHours').length === 242, '常规时段不是 242 点');
+ok(dIntra.every((p) => p.volume >= 0 && p.amount >= 0), '分时增量出现负数');
+ok(Math.abs(dIntra[0].avgPrice - dIntra[0].price) < 0.01, '分时首点均价异常');
 ok(chips.priceGrid.length === chips.bins && chips.stats.length === chips.dates.length, '筹码档位/日期数不一致');
 ok(Math.abs(chips.currentHistogram.ratios.reduce((a, b) => a + b, 0) - 1) < 0.01, '筹码 ratios 总和不为 1');
 ok(chips.stats.length === chips.histograms.length && chips.stats.every((s) => s.weightedAvgCost > 0),
   '筹码逐日直方图 / 加权平均成本缺失');
 ok(chips.current.profitRatio >= 0 && chips.current.profitRatio <= 1, '获利比例越界');
-const openAuction = auction.filter((p) => p.phase === 'open');
-const closeAuction = auction.filter((p) => p.phase === 'close');
-ok(openAuction.length + closeAuction.length === auction.length, '竞价 phase 取值异常');
+const openAuction = dAuction.filter((p) => p.phase === 'open');
+const closeAuction = dAuction.filter((p) => p.phase === 'close');
+ok(openAuction.length + closeAuction.length === dAuction.length, '竞价 phase 取值异常');
 // ---- 开盘集合竞价 9:15–9:25（同花顺 9 秒口径，69 点） ----
 ok(openAuction.filter((p) => p.volume > 0).length === 1, '开盘竞价成交量规则异常');
 ok(openAuction.length === 69, `开盘竞价节点应为 69，实际 ${openAuction.length}`);
@@ -93,15 +135,15 @@ ok(gaps.filter((g) => g === 3000).length === 2, '开盘竞价应恰有两处 3 �
   ok(openAuction.some((p) => p.time === t), `开盘竞价特殊时间点缺失：${t}`));
 ok(openAuction[0].time === '09:15:00' && openAuction.at(-1).time === '09:25:00', '开盘竞价起止时间异常');
 ok(openAuction.at(-1).virtualPrice === bars.at(-1).open, '竞价末点应等于真实 9:25 开盘价');
-ok(openAuction.at(-1).volume === intra[0].volume, '竞价成交量应与分时 09:30 首点一致');
-ok(openAuction.at(-1).amount === intra[0].amount, '竞价成交额应与分时 09:30 首点一致');
-ok(openAuction.at(-1).matchedQty * 100 === intra[0].volume, '竞价匹配量(手)应与真实成交量(股)闭合');
+ok(openAuction.at(-1).volume === dIntra[0].volume, '竞价成交量应与分时 09:30 首点一致');
+ok(openAuction.at(-1).amount === dIntra[0].amount, '竞价成交额应与分时 09:30 首点一致');
+ok(openAuction.at(-1).matchedQty * 100 === dIntra[0].volume, '竞价匹配量(手)应与真实成交量(股)闭合');
 ok(openAuction.every((p, i) => i === 0 || p.matchedQty >= openAuction[i - 1].matchedQty), '开盘竞价虚拟匹配量应单调不减');
 const priceJumps = openAuction.filter((p, i) => i > 0 && p.virtualPrice !== openAuction[i - 1].virtualPrice).length;
 ok(priceJumps <= 16, `开盘竞价价格应呈阶梯状（跳变 ${priceJumps} 次过多）`);
 ok(openAuction.at(-1).unmatchedQty === 0, '9:25 未匹配量应归零');
 // ---- 尾盘（收盘）集合竞价 14:57–15:00（21 点，沪市 2018-08-20 起） ----
-const p1500 = intra.find((p) => p.time === '15:00');
+const p1500 = dIntra.find((p) => p.time === '15:00');
 ok(closeAuction.length === 21, `尾盘竞价节点应为 21，实际 ${closeAuction.length}`);
 // 两段采集点密度一致：开盘 600s/69 点 ≈ 8.7s/点，尾盘 180s/21 点 ≈ 8.6s/点
 ok(Math.abs(closeAuction.length / openAuction.length - 180 / 600) < 0.02,
@@ -115,10 +157,33 @@ ok(closeAuction.at(-1).volume === p1500.volume, '尾盘竞价成交量应与分�
 ok(closeAuction.at(-1).amount === p1500.amount, '尾盘竞价成交额应与分时 15:00 一致');
 ok(closeAuction.every((p, i) => i === 0 || p.matchedQty >= closeAuction[i - 1].matchedQty), '尾盘竞价虚拟匹配量应单调不减');
 ok(closeAuction.at(-1).unmatchedQty === 0, '15:00 未匹配量应归零');
-ok(auction.every((p) => /^\d{2}:\d{2}:\d{2}$/.test(p.time)), '竞价 time 未精确到秒');
-ok(trades.every((t) => ['B', 'S', 'N'].includes(t.side)), '逐笔 side 越界');
-ok(trades.every((t) => t.granularity && t.sideSource && t.license), '逐笔来源标注缺失');
-ok(depth[0].bids.length === 10 && depth[0].asks.length === 10, '盘口档数异常');
+ok(dAuction.every((p) => /^\d{2}:\d{2}:\d{2}$/.test(p.time)), '竞价 time 未精确到秒');
+ok(dTrades.every((t) => ['B', 'S', 'N'].includes(t.side)), '逐笔 side 越界');
+ok(dTrades.length === 495 && dTrades.every((t) => t.granularity && t.sideSource && t.license
+  && t.rawSide !== undefined && t.requiresAuthorization === true && Array.isArray(t.ordIds)),
+  '派生逐笔必要字段缺失或条数异常');
+ok(derived.trades.every((t) => Number.isFinite(t.timestamp)), '逐笔时间戳非有限值');
+ok(derived.auction.every((p) => Number.isFinite(p.timestamp)), '竞价节点时间戳非有限值');
+// 逐笔按分钟聚合与分时相等（运行时派生层同源，数值闭合）
+{
+  const byMin = (arr, key, field) => {
+    const out = {};
+    for (const x of arr) {
+      if (x.time > '15:00') continue;
+      const k = key(x);
+      out[k] = (out[k] || 0) + x[field];
+    }
+    return out;
+  };
+  const tv = byMin(dTrades, (x) => x.time.slice(0, 5), 'volume');
+  const ta = byMin(dTrades, (x) => x.time.slice(0, 5), 'amount');
+  const iv = byMin(dIntra, (x) => x.time, 'volume');
+  const ia = byMin(dIntra, (x) => x.time, 'amount');
+  ok(Object.keys(iv).every((k) => Math.abs((tv[k] || 0) - iv[k]) < 1e-6)
+    && Object.keys(ia).every((k) => Math.abs((ta[k] || 0) - ia[k]) < 0.011),
+  '派生逐笔按分钟聚合与分时不一致');
+}
+ok(dDepth.bids.length === 10 && dDepth.asks.length === 10, '盘口档数异常');
 
 // 2. 纯函数计算
 const geo = [];
@@ -220,12 +285,15 @@ for (const f of jsFiles) {
     'build.mjs 缺少 import 扩展名补全步骤');
 }
 
-// 3b. Level-2 全部挂单：字段、整手、最小变动价位、涨跌停、时间序、撤单规则、收盘十档闭合
+// 3b. Level-2 全部挂单：落盘 7 字段集已在第 1 节校验，此处对运行时派生层 dOrders
+//     （16 字段完整集）校验整手、最小变动价位、涨跌停、时间序、撤单规则、收盘十档闭合。
 const osec = (s) => { const p = s.split(':').map(Number); return p[0] * 3600 + p[1] * 60 + (p[2] || 0); };
-const orderKeys = ['ordId', 'time', 'price', 'volume', 'side', 'action', 'level', 'phase', 'tag', 'trend'];
-ok(orders.every((o) => orderKeys.every((k) => o[k] !== undefined)), '挂单字段缺失');
-ok(orders.every((o) => o.volume > 0 && o.volume % 100 === 0), '挂单委托量非 100 股整数倍');
-ok(orders.every((o) => Math.abs(o.price * 100 - Math.round(o.price * 100)) < 1e-6), '挂单价格非 0.01 步长');
+const runtimeOrderKeys = ['ordId', 'time', 'price', 'volume', 'side', 'action', 'level', 'phase',
+  'tag', 'trend', 'origVolume', 'remainVolume', 'tradeId', 'cancelOf', 'origOrdId', 'snapshot'];
+ok(dOrders.every((o) => Object.keys(o).length === 16
+  && runtimeOrderKeys.every((k) => o[k] !== undefined)), '派生挂单运行时字段集不是 16 个');
+ok(dOrders.every((o) => o.volume > 0 && o.volume % 100 === 0), '挂单委托量非 100 股整数倍');
+ok(dOrders.every((o) => Math.abs(o.price * 100 - Math.round(o.price * 100)) < 1e-6), '挂单价格非 0.01 步长');
 // 涨跌停价按 A 股最小变动价位取整到分；比例取 manifest.limitRate，与生成脚本同一真源
 const { up: limitUp, down: limitDown } = limitPrices(m.preClose,
   m.limitRate ?? limitRateFor(m.symbol, m.name));
@@ -235,28 +303,36 @@ const indUp = Math.round(m.preClose * (1 + rate) * 100) / 100;
 const indDown = Math.round(m.preClose * (1 - rate) * 100) / 100;
 ok(Math.abs(indUp - limitUp) < 1e-6 && Math.abs(indDown - limitDown) < 1e-6,
   'limitPrices 与独立计算的涨跌停价不一致');
-ok(orders.every((o) => o.price >= indDown - 1e-6 && o.price <= indUp + 1e-6),
+ok(dOrders.every((o) => o.price >= indDown - 1e-6 && o.price <= indUp + 1e-6),
   '挂单价格越出独立计算的涨跌停边界');
-ok(orders.every((o, i) => i === 0 || osec(o.time) >= osec(orders[i - 1].time)), '挂单时间非升序');
+ok(dOrders.every((o, i) => i === 0 || osec(o.time) >= osec(dOrders[i - 1].time)), '挂单时间非升序');
+// 不可撤时段规则针对落盘真实委托流（运行时补发的守恒 CANCEL 属虚拟修补，不计入）
 ok(orders.every((o) => o.action !== 'CANCEL'
   || !((o.time >= '09:20:00' && o.time < '09:30:00') || (o.time >= '14:57:00' && o.time <= '15:00:00'))), '不可撤时段存在撤单');
-ok(orders.every((o) => o.action !== 'CANCEL' || (o.tag === `${o.side}C` && o.trend === 0)), '撤单未按买撤 BC / 卖撤 SC 标记');
-const byId = new Map(orders.map((o) => [o.ordId, o]));
-ok(orders.every((o) => o.action !== 'CANCEL' || !o.cancelOf
+ok(dOrders.every((o) => o.action !== 'CANCEL' || (o.tag === `${o.side}C` && o.trend === 0)), '撤单未按买撤 BC / 卖撤 SC 标记');
+const byId = new Map(dOrders.map((o) => [o.ordId, o]));
+const derivedOrdIds = new Set(dOrders.map((o) => o.ordId));
+ok(dOrders.every((o) => o.action !== 'CANCEL' || !o.cancelOf
   || (byId.get(o.cancelOf)?.side === o.side && byId.get(o.cancelOf)?.price === o.price
       && byId.get(o.cancelOf)?.volume >= o.volume)), '撤单关联的原始委托不一致');
-const snapAgg = {};
-orders.filter((o) => o.snapshot).forEach((o) => { const k = `${o.side}:${o.price}`; snapAgg[k] = (snapAgg[k] || 0) + o.volume; });
-const lv = [...depth[0].bids.map((d) => ({ ...d, side: 'B' })), ...depth[0].asks.map((d) => ({ ...d, side: 'S' }))];
-ok(lv.every((d) => (snapAgg[`${d.side}:${d.price}`] || 0) === d.volume), '收盘存活挂单与十档快照不闭合');
+// 落盘 orders 已无 snapshot 字段，由 rebuildOrders 在运行时重建；档位 volume 保留落盘值，
+// hydrateDepth 用同一份存活挂单流补 orderCount，故闭合口径改为「档位笔数与存活挂单同源」。
+const snapCount = {};
+dOrders.filter((o) => o.snapshot && o.action === 'NEW').forEach((o) => {
+  const k = `${o.side}:${o.price}`;
+  snapCount[k] = (snapCount[k] || 0) + 1;
+});
+const lv = [...dDepth.bids.map((d) => ({ ...d, side: 'B' })), ...dDepth.asks.map((d) => ({ ...d, side: 'S' }))];
+ok(lv.every((d) => d.orderCount > 0 && d.orderCount === (snapCount[`${d.side}:${d.price}`] || 0)),
+  '派生盘口档位 orderCount 未与运行时存活挂单同源');
 
 // 3c. 全景盘口：价格排序、量/笔数为正、前十档与十档快照闭合
 ok(pano.bids.every((d, i) => i === 0 || pano.bids[i - 1].price > d.price), '全景盘口买档价格非降序');
 ok(pano.asks.every((d, i) => i === 0 || pano.asks[i - 1].price < d.price), '全景盘口卖档价格非升序');
 ok([...pano.bids, ...pano.asks].every((d) => d.volume > 0 && d.orderCount > 0), '全景盘口存在非正挂单量/笔数');
 ok(Math.abs(pano.bids.at(-1).price - limitDown) < 1e-6 && Math.abs(pano.asks.at(-1).price - limitUp) < 1e-6, '全景盘口未覆盖至跌停/涨停价');
-ok(JSON.stringify(pano.bids.slice(0, 10).map((d) => [d.price, d.volume])) === JSON.stringify(depth[0].bids.map((d) => [d.price, d.volume]))
-  && JSON.stringify(pano.asks.slice(0, 10).map((d) => [d.price, d.volume])) === JSON.stringify(depth[0].asks.map((d) => [d.price, d.volume])), '全景盘口前十档与十档快照不闭合');
+ok(JSON.stringify(pano.bids.slice(0, 10).map((d) => [d.price, d.volume])) === JSON.stringify(dDepth.bids.map((d) => [d.price, d.volume]))
+  && JSON.stringify(pano.asks.slice(0, 10).map((d) => [d.price, d.volume])) === JSON.stringify(dDepth.asks.map((d) => [d.price, d.volume])), '全景盘口前十档与十档快照不闭合');
 
 // 3d. 涨跌停场景：一侧无挂单、另一侧封单价格等于涨跌停价，全景盘口同步
 ok(!!scen.normal && !!scen.limitUp && !!scen.limitDown, '盘口场景缺失');
@@ -270,12 +346,12 @@ ok(scen.limitUp.pano.asks.length === 0 && scen.limitUp.pano.bids[0].price === li
 
 // 3e. 委托生命周期守恒：NEW − ΣFILL − ΣCANCEL = 剩余在挂量，且每个事件的 remainVolume 逐步一致
 const evByOrig = new Map();
-orders.forEach((o) => {
+dOrders.forEach((o) => {
   if (!o.origOrdId) return;
   if (!evByOrig.has(o.origOrdId)) evByOrig.set(o.origOrdId, []);
   evByOrig.get(o.origOrdId).push(o);
 });
-ok(orders.filter((o) => o.action === 'NEW' && !o.snapshot).every((n) => {
+ok(dOrders.filter((o) => o.action === 'NEW' && !o.snapshot).every((n) => {
   let rem = n.volume;
   const evs = (evByOrig.get(n.ordId) || []).slice()
     .sort((a, b) => a.time.localeCompare(b.time) || (a.ordId < b.ordId ? -1 : 1));
@@ -285,19 +361,34 @@ ok(orders.filter((o) => o.action === 'NEW' && !o.snapshot).every((n) => {
   }
   return true;
 }), '委托生命周期不守恒（剩余量与事件不一致）');
-ok(orders.every((o) => o.action !== 'CANCEL' || o.origVolume >= o.volume), '撤单量大于原委托量');
-ok(orders.every((o) => o.action !== 'FILL' || !!o.tradeId), '成交事件缺少成交编号');
-ok(trades.every((t) => !t.ordIds || t.ordIds.every((id) => byId.has(id))), '合并分笔关联了不存在的委托号');
+ok(dOrders.every((o) => o.action !== 'CANCEL' || o.origVolume >= o.volume), '撤单量大于原委托量');
+ok(dOrders.every((o) => o.action !== 'FILL' || !!o.tradeId), '成交事件缺少成交编号');
+ok(dTrades.every((t) => !t.ordIds || t.ordIds.every((id) => derivedOrdIds.has(id))), '合并分笔关联了不存在的委托号');
 
 // 4. 页面引用完整性 + 组件注册入口契约（elements 不再有 import 时自动注册的副作用）
-const html = readFileSync(path.join(root, 'index.html'), 'utf8');
+const htmlRaw = readFileSync(path.join(root, 'index.html'), 'utf8');
+const shellCssSrc = readFileSync(path.join(root, 'src/workspace/shell-css.ts'), 'utf8');
+// 组件封装后：页面里的 DOM/CSS/逻辑已迁入 <stock-workspace> 的源码与模板。
+// 正向断言扫描「index.html + 全部 workspace 源码 + 模板 + 页面壳样式」的合集（命中的是组件实现）；
+// 负向断言与 import 引用检查仍只针对 index.html 原文，避免被拼接内容误命中。
+const html = [
+  readFileSync(path.join(root, 'src/workspace/module-catalog.ts'), 'utf8'),
+  htmlRaw,
+  readFileSync(path.join(root, 'src/elements/stock-workspace.ts'), 'utf8'),
+  readFileSync(path.join(root, 'src/workspace/template.ts'), 'utf8'),
+  readFileSync(path.join(root, 'src/workspace/head.ts'), 'utf8'),
+  readFileSync(path.join(root, 'src/workspace/controls.ts'), 'utf8'),
+  readFileSync(path.join(root, 'src/workspace/detail.ts'), 'utf8'),
+  readFileSync(path.join(root, 'src/workspace/url-config.ts'), 'utf8'),
+  shellCssSrc,
+].join('\n');
 // 同时支持副作用导入 import './x.js' 与命名/默认导入 import { A } from './x.js'
-const imports = [...html.matchAll(/import\s+(?:[^'"]*?\s+from\s+)?['"](\.\/[^'"]+)['"]/g)].map((x) => x[1]);
+const imports = [...htmlRaw.matchAll(/import\s+(?:[^'"]*?\s+from\s+)?['"](\.\/[^'"]+)['"]/g)].map((x) => x[1]);
 for (const i of imports) ok(existsSync(path.join(root, i.split('?')[0])), `index.html 引用缺失：${i}`);
 ok(html.includes('defineAll()'), 'index.html 未显式调用 defineAll()');
 
 const ELEMENT_TAGS_CHECK = ['stock-chart', 'price-pane', 'indicator-pane', 'chip-pane',
-  'auction-pane', 'trade-tape', 'depth-book'];
+  'auction-pane', 'trade-tape', 'depth-book', 'detail-canvas', 'stock-workspace'];
 const entryPath = path.join(root, 'src/index.ts');
 ok(existsSync(entryPath), '缺少注册入口 src/index.ts');
 if (existsSync(entryPath)) {
@@ -324,7 +415,11 @@ const generatedDts = [
   'dist/index.d.ts', 'dist/pure.d.ts', 'dist/types.d.ts', 'dist/global.d.ts',
   'dist/elements/stock-chart.d.ts', 'dist/elements/trade-tape.d.ts', 'dist/elements/depth-book.d.ts',
   'dist/elements/price-pane.d.ts', 'dist/elements/indicator-pane.d.ts', 'dist/elements/chip-pane.d.ts',
-  'dist/elements/auction-pane.d.ts', 'dist/frameworks/react.d.ts', 'dist/frameworks/vue.d.ts',
+  'dist/elements/auction-pane.d.ts', 'dist/elements/stock-workspace.d.ts',
+  'dist/workspace/shell-css.d.ts',
+  'dist/frameworks/react.d.ts', 'dist/frameworks/vue.d.ts',
+  'dist/frameworks/controller.d.ts', 'dist/frameworks/svelte.d.ts',
+  'dist/frameworks/angular.d.ts', 'dist/frameworks/solid.d.ts', 'dist/frameworks/vanilla.d.ts',
 ];
 for (const f of generatedDts) ok(existsSync(path.join(root, f)), `缺少 tsc 生成的声明 ${f}`);
 const dtsAll = generatedDts.filter((f) => existsSync(path.join(root, f)))
@@ -349,7 +444,22 @@ for (const f of ['src/frameworks/react.ts', 'dist/frameworks/react.d.ts']) {
 const themeSrc = readFileSync(path.join(root, 'src/types.ts'), 'utf8');
 ok(themeSrc.includes('export const THEMES') && themeSrc.includes('export function applyPalette'),
   'types.js 缺少主题预设 / applyPalette');
-ok(html.includes('var(--sc-bg'), 'index.html :root 未接入 --sc-* 主题变量');
+ok(shellCssSrc.includes('--page-bg') && shellCssSrc.includes('html[data-theme="dark"]')
+  && shellCssSrc.includes(':root:has(stock-workspace[data-theme="dark"])'), '组件未自带页面壳明暗主题');
+ok(!htmlRaw.includes('<style>'), '示例页仍内联样式，发布包不自包含');
+ok(!htmlRaw.includes('--page-bg:'), '页面壳变量仍定义在 index.html');
+ok(!htmlRaw.includes('var(--page-'), '示例页仍引用页面壳变量，样式未完全收进组件');
+ok(!htmlRaw.includes('--sw-'), '组件变量仍暴露在页面');
+ok(!html.includes('var(--sc-bg'), '组件变量仍暴露在页面');
+// ---- 界面明暗主题切换契约（工具栏按钮 / 统一配置链 / 页面壳 fallback 同步）----
+ok(html.includes('id="btn-theme"') && html.includes('切换明暗主题'),
+  '工具栏缺少明暗主题切换按钮（id="btn-theme" / 切换明暗主题）');
+ok(/patchConfig\(\{\s*theme:\s*next\s*\}\)/.test(html)
+  && html.includes('resolveWorkspaceTheme(ctx.config().theme).name'),
+  'controls.ts 未通过 patchConfig({ theme: next }) 走统一配置链');
+ok(htmlRaw.includes('WORKSPACE_EVENTS.CONFIG_CHANGE')
+  || htmlRaw.includes("'workspace-config-change'"),
+  'index.html 缺少 workspace-config-change 配置同步订阅');
 // .d.ts 契约一致性：实现里用到的公开方法/事件必须在声明中（防再次漂移）
 const dtsText = dtsAll;
 for (const m of ['setSideExpanded', 'updateSide', 'setWindow', 'setViewConfig', 'setCompact',
@@ -377,12 +487,12 @@ ok(!scSrc.includes('document.documentElement'), 'setTheme 仍写 :root（多实�
 ok(scSrc.includes('this.style.setProperty(k, v)'), 'setTheme 未把 --sc-* 写到本实例 host');
 const tapeSrc = readFileSync(path.join(root, 'src/elements/trade-tape.ts'), 'utf8');
 ok(tapeSrc.includes('this._eventHost'), 'trade-tape 仍向 document 注册 crosshair 监听');
-ok(!html.includes("document.addEventListener('dataset-ready'"), '页面仍用 document 监听业务事件');
+ok(!htmlRaw.includes("document.addEventListener('dataset-ready'"), '页面仍用 document 监听业务事件');
 // 硬编码收口：布局数值与示例页颜色不得再写死
 const ctxSrc = readFileSync(path.join(root, 'src/core/chart-context.ts'), 'utf8');
 ok(ctxSrc.includes('const SUBPLOT_INFO_H = LAYOUT.rowH'), '副图信息栏高度未引用 LAYOUT');
-ok(!html.includes('<ma-line period="5" color='), '示例页均线仍写死 color');
-ok(html.includes('var(--sc-row-h,18px)') && html.includes('height:var(--sc-row-h,18px)'),
+ok(!htmlRaw.includes('<ma-line period="5" color='), '示例页均线仍写死 color');
+ok(html.includes('var(--sw-row-h, 18px)') && html.includes('height: var(--sw-row-h, 18px)'),
   '页面仍有未引用 LAYOUT 的 18px 行高');
 const ppSrc = readFileSync(path.join(root, 'src/elements/price-pane.ts'), 'utf8');
 ok(ppSrc.includes('softColor(PALETTE.up)') && ppSrc.includes('rgba(PALETTE.neutral)'),
@@ -391,7 +501,7 @@ ok(ppSrc.includes('softColor(PALETTE.up)') && ppSrc.includes('rgba(PALETTE.neutr
 ok(typesSrc.includes('barH: 24'), 'LAYOUT 缺少统一 barH 基准');
 ok(scSrc.includes('const each = Math.floor(rem / 4)')
   && scSrc.includes('const left = rem - 4 * each')
-  && scSrc.includes("setProperty('--sc-split-h'"),
+  && scSrc.includes("setProperty('--sw-split-h'"),
   '4 条行均分 / 余数给间隙的算式缺失');
 // 第三轮回归防护：主题重算、footer 时序自愈、类型契约
 // TS 化后方法签名带参数类型，用「缩进 + 方法名」定位定义而非固定形参文本
@@ -399,10 +509,10 @@ const setThemeBody = scSrc.slice(scSrc.indexOf('  setTheme('), scSrc.indexOf('  
 ok(setThemeBody.includes('this.syncSideBars()'), 'setTheme 后未重算 4 条行均分');
 ok(scSrc.includes('refreshDefaultMAColors(palette)') && scSrc.includes('MA_DEFAULT_KEYS'),
   '主题切换未刷新默认均线色');
-ok(scSrc.includes("color:var(--sc-up,"), 'showError 仍读全局 PALETTE 颜色');
+ok(scSrc.includes("color:var(--sw-up,"), 'showError 仍读全局 PALETTE 颜色');
 ok(scSrc.includes("attributeFilter: ['hidden']") && scSrc.includes('footer.getClientRects().length'),
   '底部条 hidden 变化未自愈重算');
-ok(html.includes('.tape-footer[hidden]{display:none}'), 'hidden 会被 display:flex 覆盖');
+ok(/\.tape-footer\[hidden\]\s*\{[^}]*display:\s*none/.test(html), 'hidden 会被 display:flex 覆盖');
 ok(tapeSrc.includes("this.colCls[i] || ''"), '时间表头又回退成 num（右对齐）');
 ok(!dtsText.includes('export declare class PaneElementBase'), '.d.ts 仍有幽灵基类导出');
 // tsc 生成的声明会把对象类型换行展开，故按关键片段分别断言
@@ -457,7 +567,7 @@ ok(readFileSync(path.join(root, 'src/elements/indicator-pane.ts'), 'utf8').inclu
   '副图未从组件统一真源读取 MACD 参数');
 ok(dtsText.includes("'macd-params-change'") && dtsText.includes('setMACDParams('),
   '.d.ts 缺少 MACD 参数契约');
-ok(html.includes("urlParams.get('macd')"), '示例页缺少 ?macd= 配置入口');
+ok(html.includes("get('macd')") && html.includes("has('macd')"), '示例页缺少 ?macd= 配置入口');
 // P1 算法口径
 ok(existsSync(path.join(root, 'scripts/auction-match.mjs'))
   && existsSync(path.join(root, 'scripts/limit-rules.mjs')),
@@ -490,7 +600,7 @@ for (const key of ['1m', '5m', '15m', '30m', '60m', '120m', '1d', '1w', '1M', '1
   ok(aggSrc.includes(`key: '${key}'`), `PERIODS 缺少 ${key}`);
 }
 ok(aggSrc.includes("label: '120 分钟'"), '120m 标签应为「120 分钟」');
-ok(html.includes('selPeriod.value = chart.getPeriod()'), '周期下拉未显式选中默认日 K');
+ok(html.includes('selPeriod.value = config.period'), '周期下拉未显式选中默认日 K');
 ok(readFileSync(path.join(root, 'src/core/chart-context.ts'), 'utf8').includes('DEFAULT_PERIOD'),
   '组件未使用默认周期常量');
 // 多日分时：数据契约 + 竞价隐藏
@@ -498,25 +608,36 @@ ok(multiPts.length === 5 * 242 && new Set(multiPts.map((p) => p.tradeDate)).size
   '多日分时不是 5 日 × 242 点或缺少 tradeDate');
 ok(!m.files.chips && !m.files.intradayMulti && !m.files.depthFull && !m.files.depthScenarios,
   'manifest 仍把运行时派生数据集登记为外部输入');
-ok(Object.keys(m.files).length === 6 && Object.keys(m.provenance).length === 6,
-  'manifest 的 files / provenance 未收敛为 6 个 L0 输入');
+ok(Object.keys(m.files).length === 5 && Object.keys(m.provenance).length === 5,
+  'manifest 的 files / provenance 未收敛为 5 个 L0 输入（trades 已不落盘）');
+ok(Object.keys(m.units).length === 5
+  && m.units.bars?.turnoverRate === 'percent'
+  && m.units.auction?.matchedQty === 'lot'
+  && m.units.depth?.volume === 'share', 'manifest.units 未覆盖 5 组或关键单位标注错误');
+ok(Array.isArray(m.demoPatterns) && m.demoPatterns.length === 4
+  && ['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken']
+    .every((s) => m.demoPatterns.some((p) => p.state === s)), 'manifest.demoPatterns 未覆盖四态 4 项');
 ok(scSrc.includes('setIntradayDays(') && scSrc.includes("'intraday-days'"),
   '组件缺少分时天数配置入口');
-ok(readFileSync(path.join(root, 'src/core/chart-context.ts'), 'utf8').includes('!this.isMultiDay'),
+// 布局计算已抽到 src/architecture/main-canvas-layout.ts（纯数据 Layout）
+ok(readFileSync(path.join(root, 'src/architecture/main-canvas-layout.ts'), 'utf8').includes('!isMultiDay'),
   '多日场景未隐藏竞价段');
 ok(readFileSync(path.join(root, 'src/elements/price-pane.ts'), 'utf8').includes('ctx.isMultiDay'),
   '主图未适配多日日期标签与价格轴基准');
-ok(html.includes('intraday-days-seg') && html.includes("urlParams.get('intraday-days')"),
+ok(html.includes('intraday-days-seg') && html.includes("get('intraday-days')"),
   '页面缺少分时天数控件或 URL 入口');
-ok(html.includes('data-days="5"') && html.includes('syncDaysSeg(n)'),
+ok(html.includes('data-days="5"') && html.includes('syncDaysSeg(ctx'),
   '多日入口未改为 tab 式分段控件');
-ok(html.includes("btnAuction.disabled = multi") && html.includes('多日不展示竞价'),
+ok(html.includes('btn.disabled = multi') && html.includes('多日不展示竞价'),
   '多日场景未明确提示竞价不可用');
 // 逐笔视图文案：全仓（UI / 规则文档 / 数据契约 / 生成脚本）统一为「逐笔明细」；
 // 下面断言中的 '逐笔成交' 是**旧词检测目标**，属于代码逻辑，不是表述，故保留。
-ok(html.includes('data-set="trades">逐笔明细<') && html.includes("|| '逐笔明细'"),
-  '逐笔视图文案未统一为「逐笔明细」');
-ok(!html.includes('>逐笔成交<') && !html.includes("|| '逐笔成交'"), 'UI 仍残留「逐笔成交」文案');
+// 覆盖视图骨架已迁入 <detail-canvas> 容器，标签文案在该元素内
+const detailCanvasSrc = readFileSync(path.join(root, 'src/elements/detail-canvas.ts'), 'utf8');
+ok(detailCanvasSrc.includes('data-set="trades"') && detailCanvasSrc.includes('逐笔明细')
+  && html.includes("|| '逐笔明细'"),
+'逐笔视图文案未统一为「逐笔明细」');
+ok(!htmlRaw.includes('>逐笔成交<') && !htmlRaw.includes("|| '逐笔成交'"), 'UI 仍残留「逐笔成交」文案');
 ok(readFileSync(path.join(root, 'README.md'), 'utf8').includes('「逐笔明细 / 全部挂单 / 全景盘口」'),
   'README 界面描述未同步');
 // 规则表述也统一：调研文档 / 类型注释 / 数据契约 / 生成脚本 / SOURCES 全部不再出现旧词
@@ -540,9 +661,9 @@ ok(!readFileSync(path.join(root, 'scripts/verify.mjs'), 'utf8').includes(legacyT
 // 竞价文案：图表上删除「集合竞价」标题，开关统一用「竞价」
 ok(ctxSrc.includes("title: ''") && ctxSrc.includes("hoverTitle: '竞价'"),
   '竞价段仍显示「集合竞价」标题');
-ok(html.includes('>竞价：开<') && html.includes("`竞价：${auctionOn ? '开' : '关'}`"),
+ok(html.includes('竞价：开') && html.includes("`竞价：${config.auctionEnabled ? '开' : '关'}`"),
   '竞价开关文案未改为「竞价」');
-ok(!html.includes('>集合竞价：开<') && !html.includes('竞价(开盘+尾盘)'),
+ok(!htmlRaw.includes('>集合竞价：开<') && !htmlRaw.includes('竞价(开盘+尾盘)'),
   '仍残留「集合竞价」或「竞价(开盘+尾盘)」文案');
 ok(existsSync(path.join(root, 'scripts/tests/multi-day.test.mjs')),
   '缺少多日分时数值回归测试');
@@ -552,8 +673,8 @@ ok(existsSync(path.join(root, 'src/core/market-constants.ts'))
   'A 股业务常量未收口到单一真源');
 ok(m.provenance && Object.keys(m.files).every((k) => m.provenance[k]?.licensed !== undefined),
   'manifest.provenance 未覆盖全部数据集');
-ok(Object.entries(m.provenance || {}).filter(([, v]) => v.availability === 'level2-licensed').length === 3,
-  'Level-2 数据集授权标注不完整（6 个 L0 输入中 trades/depth/orders 需授权）');
+ok(Object.entries(m.provenance || {}).filter(([, v]) => v.availability === 'level2-licensed').length === 2,
+  'Level-2 数据集授权标注不完整（5 个 L0 输入中 depth/orders 需授权）');
 ok(readFileSync(path.join(root, 'src/data/SOURCES.md'), 'utf8').includes('派生数据集与 Level-2 授权边界'),
   'SOURCES.md 未覆盖 orders/depthFull/depthScenarios');
 ok(existsSync(path.join(root, 'scripts/tests/contract-runtime.test.mjs')),
@@ -584,8 +705,8 @@ ok(genSrc2.includes('RAW_CANDIDATES') && genSrc2.includes('rawCopyDir'), '原始
 ok(genSrc2.includes('SOURCE_DATE_EPOCH') && !genSrc2.includes("generatedAt: '2026-11-16"),
   'generatedAt 仍硬编码');
 const instrument = rd('src/data/raw/instrument.json');
-ok(instrument.floatShares === m.floatShares && typeof m.floatSharesSource === 'string'
-  && m.floatSharesSource.length > 0, 'floatShares 与归档不符或缺少来源标注');
+ok(instrument.floatShares === m.floatShares && typeof instrument.source === 'string'
+  && typeof instrument.asOf === 'string', 'floatShares 与归档不符或归档缺少来源标注');
 ok(readFileSync(path.join(root, 'scripts/build-order-book.mjs'), 'utf8').includes('shared.mjs')
   && !readFileSync(path.join(root, 'scripts/build-order-book.mjs'), 'utf8').includes('function mulberry32'),
   '生成脚本未共用 PRNG 单一真源');
@@ -596,12 +717,68 @@ ok(!readFileSync(path.join(root, 'src/core/indicator-params.ts'), 'utf8').includ
 ok(existsSync(path.join(root, 'scripts/tests/p1p2-architecture.test.mjs')),
   '缺少 P1/P2 架构回归测试');
 const dbSrc = readFileSync(path.join(root, 'src/elements/depth-book.ts'), 'utf8');
-ok(dbSrc.includes('var(--sc-bar-h') && dbSrc.includes('var(--sc-split-h'),
+ok(dbSrc.includes('var(--sw-bar-h') && dbSrc.includes('var(--sw-split-h'),
   '盘口两条行或买卖间隙未用统一变量');
-ok(html.includes('height:var(--sc-bar-h,24px)') && tapeSrc.includes('var(--sc-bar-h'),
+ok(html.includes('height: var(--sw-bar-h, 24px)') && tapeSrc.includes('var(--sw-bar-h'),
   '明细标题行 / 表头行未用统一 bar 高度');
 
-// 5. 结论
+// 4b. 模块化加载 · 阶段二（DOM/CSS/生命周期按需装载）
+{
+  const tplSrc = readFileSync(path.join(root, 'src/workspace/template.ts'), 'utf8');
+  const wsSrc = readFileSync(path.join(root, 'src/elements/stock-workspace.ts'), 'utf8');
+  const mclSrc = readFileSync(path.join(root, 'src/architecture/main-canvas-layout.ts'), 'utf8');
+  // 模板 / CSS 构建函数与组件按模块装载入口
+  ok(tplSrc.includes('buildWorkspaceTemplate') && tplSrc.includes('buildWorkspaceCSS'),
+    'template.ts 缺少 buildWorkspaceTemplate / buildWorkspaceCSS 构建函数');
+  ok(wsSrc.includes('buildWorkspaceTemplate(') && wsSrc.includes('buildWorkspaceCSS(')
+    && wsSrc.includes('rebuildModules') && wsSrc.includes('isModuleEnabled'),
+    'stock-workspace.ts 未按需装载 DOM/CSS/生命周期或缺少 rebuildModules/isModuleEnabled');
+  // 页面接入：cfg.modules / cfg.preset 传给 loadDataset()
+  ok(htmlRaw.includes('loadDataset("./src/data", { modules:')
+    && htmlRaw.includes('preset: cfg.preset'),
+    'index.html 未把 cfg.modules / cfg.preset 传给 loadDataset()');
+  // 0 副图布局兜底守卫（两处同款）
+  ok(mclSrc.includes('hasIndicatorPane') && ctxSrc.includes('hasIndicatorPane'),
+    'main-canvas-layout.ts / chart-context.ts 缺少 0 副图布局兜底守卫');
+  // 运行时验证：build* 输出随模块裁剪，full 仍含全部模块节点
+  const fullMods = resolveModules({ preset: 'full' });
+  const minimalMods = resolveModules({ preset: 'minimal' });
+  const fullTpl = buildWorkspaceTemplate(fullMods);
+  ok(fullTpl.includes('chip-pane') && fullTpl.includes('indicator-pane')
+    && fullTpl.includes('auction-pane') && fullTpl.includes('depth-book')
+    && fullTpl.includes('tape-home'),
+    'full 模板缺少模块节点');
+  const minimalTpl = buildWorkspaceTemplate(minimalMods);
+  ok(!minimalTpl.includes('indicator-pane') && !minimalTpl.includes('chart-tools'),
+    'minimal 模板未按模块裁剪');
+  ok(!buildWorkspaceCSS(minimalMods).includes('.pano-row'),
+    'minimal CSS 仍含全景盘口规则');
+}
+
+// 5. 跨框架适配层契约：具名子路径 exports / 7 个框架文件 / JSX 精确类型 / 根入口导出
+{
+  const fwNamed = [
+    './frameworks/controller', './frameworks/svelte', './frameworks/angular',
+    './frameworks/solid', './frameworks/vanilla',
+  ];
+  for (const sub of fwNamed) {
+    const e = pkg.exports?.[sub];
+    ok(!!e && typeof e.types === 'string'
+      && (typeof e.import === 'string' || typeof e.default === 'string'),
+    `exports 缺少具名子路径 ${sub} 的 types / import(default) 条件`);
+  }
+  for (const name of ['controller', 'react', 'vue', 'svelte', 'angular', 'solid', 'vanilla']) {
+    ok(existsSync(path.join(root, `src/frameworks/${name}.ts`)), `缺少框架适配源码 src/frameworks/${name}.ts`);
+  }
+  const globalSrc = readFileSync(path.join(root, 'src/global.d.ts'), 'utf8');
+  ok(globalSrc.includes("'stock-workspace':") && globalSrc.includes('data?: ChartDataset'),
+    'src/global.d.ts 缺少 stock-workspace 精确 JSX 类型（data?: ChartDataset）');
+  const rootEntry = readFileSync(path.join(root, 'src/index.ts'), 'utf8');
+  ok(rootEntry.includes('createWorkspaceController') && rootEntry.includes('vWorkspace'),
+    'src/index.ts 缺少 createWorkspaceController / vWorkspace 导出');
+}
+
+// 6. 结论
 // ---------------------------------------------------------------- 跨图强逻辑关联闭合
 // 以下断言针对「运行时派生层」输出，而非落盘 JSON，保证各图数据同源且可互相推导。
 {

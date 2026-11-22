@@ -10,7 +10,10 @@ import type { ChipPane } from './elements/chip-pane';
 import type { AuctionPane } from './elements/auction-pane';
 import type { TradeTape } from './elements/trade-tape';
 import type { DepthBook } from './elements/depth-book';
-import type { ChipMode, CustomElementAttributes, StockChartJSXAttributes } from './types';
+import type { DetailCanvas } from './elements/detail-canvas';
+import type { StockWorkspace } from './elements/stock-workspace';
+import type { ChartDataset, ChipMode, CustomElementAttributes, StockChartJSXAttributes } from './types';
+import type { WorkspaceConfig } from './workspace/types';
 
 declare global {
   interface HTMLElementTagNameMap {
@@ -21,6 +24,8 @@ declare global {
     'auction-pane': AuctionPane;
     'trade-tape': TradeTape;
     'depth-book': DepthBook;
+    'detail-canvas': DetailCanvas;
+    'stock-workspace': StockWorkspace;
   }
   /** 全局 JSX 标签声明：TSX / Preact / Solid 等可直接使用自定义元素 */
   namespace JSX {
@@ -32,6 +37,16 @@ declare global {
       'auction-pane': CustomElementAttributes & { width?: string | number };
       'trade-tape': CustomElementAttributes & { 'page-size'?: string | number; order?: 'asc' | 'desc' };
       'depth-book': CustomElementAttributes & { width?: string | number; slot?: string };
+      'detail-canvas': CustomElementAttributes & { 'data-set'?: 'trades' | 'orders' | 'panorama' };
+      'stock-workspace': CustomElementAttributes & {
+        data?: ChartDataset | null;
+        config?: Partial<WorkspaceConfig>;
+        onWorkspaceReady?: (ev: CustomEvent<{ config: WorkspaceConfig }>) => void;
+        onDatasetReady?: (ev: CustomEvent<{ dataset: ChartDataset | null }>) => void;
+        onWorkspaceConfigChange?: (ev: CustomEvent<{ config: WorkspaceConfig; patch: Partial<WorkspaceConfig> }>) => void;
+        onChartError?: (ev: CustomEvent<{ message: string }>) => void;
+        /** @deprecated 用 data 属性注入对象 */ dataset?: string;
+      };
       /** 配置节点（非自定义元素类）：由 <stock-chart> 读取 period/color 初始化均线 */
       'ma-line': CustomElementAttributes & { period?: string | number; color?: string };
     }

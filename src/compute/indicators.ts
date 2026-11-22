@@ -1,6 +1,7 @@
 // 指标计算（当前 TS/JS 实现）。串行递推类指标保持串行，符合 docs/03 §6.4 的并行性约束。
 // 后续接入 Rust/WASM 时，只需让 WasmComputeEngine 实现同名方法，组件层不改。
-import { AM_START, AM_END, PM_START, SESSION_MINUTES, DAY_MINUTES } from '../core/market-constants';
+import { DAY_MINUTES } from '../core/market-constants';
+import { elapsedMarketMinutes } from '../algorithms/market-time';
 import type { Bar, IntradayPoint, ComputeResult } from '../types';
 
 type NumericBarKey = 'open' | 'high' | 'low' | 'close' | 'preClose' | 'volume' | 'amount' | 'turnoverRate';
@@ -105,14 +106,8 @@ export function volumeRatio(bars: Bar[], n = 5) {
   return out;
 }
 
-/** 截至某个分时时刻的累计开市分钟数（扣除 11:30–13:00 午休，最小 1 分钟） */
-export function elapsedMarketMinutes(time: string) {
-  const [h, m] = String(time || '09:30').split(':').map(Number);
-  const n = (h || 0) * 60 + (m || 0);
-  if (n <= AM_END) return Math.max(1, Math.min(SESSION_MINUTES, n - AM_START));
-  if (n >= PM_START) return Math.max(1, SESSION_MINUTES + Math.min(SESSION_MINUTES, n - PM_START));
-  return SESSION_MINUTES;   // 午休期间按上午已收盘计
-}
+/** 累计开市分钟数的唯一实现在 algorithms/market-time，这里 re-export 供 pure 子入口复用。 */
+export { elapsedMarketMinutes };
 
 /**
  * A 股分时量比（行情软件通行口径）：

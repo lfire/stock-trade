@@ -34,14 +34,40 @@
       "types": "./dist/events.d.ts",
       "default": "./dist/events.js"
     },
+    "./frameworks/controller": {
+      "types": "./dist/frameworks/controller.d.ts",
+      "default": "./dist/frameworks/controller.js"
+    },
+    "./frameworks/svelte": {
+      "types": "./dist/frameworks/svelte.d.ts",
+      "default": "./dist/frameworks/svelte.js"
+    },
+    "./frameworks/angular": {
+      "types": "./dist/frameworks/angular.d.ts",
+      "default": "./dist/frameworks/angular.js"
+    },
+    "./frameworks/solid": {
+      "types": "./dist/frameworks/solid.d.ts",
+      "default": "./dist/frameworks/solid.js"
+    },
+    "./frameworks/vanilla": {
+      "types": "./dist/frameworks/vanilla.d.ts",
+      "default": "./dist/frameworks/vanilla.js"
+    },
     "./core/*.js": "./dist/core/*.js",
     "./core/*": "./dist/core/*.js",
     "./gl/*.js": "./dist/gl/*.js",
     "./gl/*": "./dist/gl/*.js",
     "./compute/*.js": "./dist/compute/*.js",
     "./compute/*": "./dist/compute/*.js",
-    "./frameworks/*.js": "./dist/frameworks/*.js",
-    "./frameworks/*": "./dist/frameworks/*.js",
+    "./frameworks/*.js": {
+      "types": "./dist/frameworks/*.d.ts",
+      "default": "./dist/frameworks/*.js"
+    },
+    "./frameworks/*": {
+      "types": "./dist/frameworks/*.d.ts",
+      "default": "./dist/frameworks/*.js"
+    },
     "./elements/*.js": "./dist/elements/*.js",
     "./elements/*": "./dist/elements/*.js"
   },

@@ -3,7 +3,14 @@
 /** base 必须显式提供；也可完全跳过 fetch，改用 <stock-chart>.setDataset() 注入内存数据 */
 import type { ChartDataset } from '../types';
 import { deriveDataset } from './derive-dataset';
-export async function loadDataset(base: string) {
+import type { DeriveOptions } from './derive-dataset';
+import { resolveModules, requiredDataFor } from '../workspace/module-catalog';
+import type { DataKey } from '../workspace/module-catalog';
+
+/** 与 DeriveOptions 同源：显式 modules 优先于 preset，未传 = 全量装载 */
+export type LoadOptions = DeriveOptions;
+
+export async function loadDataset(base: string, options?: LoadOptions) {
   if (!base) throw new Error('loadDataset(base)：需显式提供数据目录，或改用 setDataset() 注入数据');
   const get = async (file: string) => {
     let lastErr;
@@ -21,11 +28,16 @@ export async function loadDataset(base: string) {
   };
 
   const manifest = await get('manifest.json');
+  // 模块化加载：只 fetch 启用模块的数据依赖闭包所覆盖的落盘分片。
+  // 不传 options 时 resolveModules 返回全部 12 模块 → 5 个分片全加载（行为不变）。
+  const enabled = resolveModules(options ?? { preset: 'full' });
+  const need = new Set<DataKey>(requiredDataFor(enabled));
   // manifest.files 驱动：分片集合不再硬编码；单个分片缺失时跳过（由 setDataset() 归一化兜底），
   // 但 manifest 本身缺失仍属致命错误，由 get() 的三次重试后抛出。
   const result = { manifest } as ChartDataset;
   for (const [key, file] of Object.entries(manifest.files || {})) {
     if (typeof file !== 'string') continue;
+    if (!need.has(key as DataKey)) continue;   // 未装载模块的分片不发请求
     try {
       result[key] = await get(file);
     } catch (err: unknown) {
@@ -34,5 +46,5 @@ export async function loadDataset(base: string) {
   }
   // L0 输入加载完成后，L1 子图数据与跨图数值闭合统一由算法派生层生成，
   // 不再依赖 chips / intradayMulti / depthFull / depthScenarios 这些落盘中间产物。
-  return deriveDataset(result);
+  return deriveDataset(result, options);
 }

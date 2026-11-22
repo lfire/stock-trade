@@ -10,7 +10,11 @@
  */
 export * from './rounding';
 export * from './random';
-export * from './market-time';
+// market-time 为时间口径唯一真源；显式列出，避免与 aggregation 的 intradayBucket
+// re-export 形成 export * 同名歧义，并与 pure 子入口暴露同一个引用。
+export {
+  clockMinutes, elapsedMarketMinutes, intradayBucket, isoWeek, isoToDateBase,
+} from './market-time';
 export * from './price-limits';
 export * from './returns';
 export * from './vwap';

@@ -1,8 +1,9 @@
 // 十档盘口：DOM 表格，支持 5/10 档切换与「普通 / 涨停 / 跌停」三种盘口场景。
 // 涨跌停时一侧无挂单，用提示条代替多行空档，并把封单档高亮。
-import { PALETTE, LAYOUT } from '../types';
+import { LAYOUT } from '../types';
 import { emitEvent, CHART_EVENTS } from '../events';
 import type { DepthLevel, DepthUnit, DepthBookSnapshot } from '../types';
+import { trim } from '../algorithms/format';
 
 export class DepthBook extends HTMLElement {
   declare snap: DepthBookSnapshot | null;
@@ -54,9 +55,7 @@ export class DepthBook extends HTMLElement {
     // 窄列按数值大小自适应换算 万 / 亿，小数位随量级收敛；精确值放 title 供 hover 查看。
     const isAmt = this.unit === 'amount';
     const metric = (price: number, volume: number) => isAmt ? price * volume : volume;
-    // 十档列宽很窄：≥100 取整数、≥10 取 1 位，避免换算后换行；精确值由 title 提供
-    const trim = (x: number) => (x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2))
-      .replace(/\.0+$/, '').replace(/(\.\d)0$/, '$1');
+    // 窄列小数位收敛复用 algorithms/format 的 trim（≥100 取整、≥10 取 1 位）。
     const fmtCell = (price: number, volume: number) => {
       const v = metric(price, volume);
       return v >= 1e8 ? `${trim(v / 1e8)}亿` : v >= 1e4 ? `${trim(v / 1e4)}万` : `${Math.round(v)}`;
@@ -84,7 +83,7 @@ export class DepthBook extends HTMLElement {
       for (let i = levels - 1; i >= 0; i -= 1) {
         const a = asks[i];
         rows.push(a
-          ? row(`ask${sealed('ask', i)}`, `卖${i + 1}`, a.price, a.volume, a.orderCount, 'var(--sc-down,#1D9E75)')
+          ? row(`ask${sealed('ask', i)}`, `卖${i + 1}`, a.price, a.volume, a.orderCount, 'var(--sw-down,#1D9E75)')
           : emptyRow('ask', `卖${i + 1}`));
       }
     }
@@ -97,7 +96,7 @@ export class DepthBook extends HTMLElement {
       for (let i = 0; i < levels; i += 1) {
         const b = bids[i];
         rows.push(b
-          ? row(`bid${sealed('bid', i)}`, `买${i + 1}`, b.price, b.volume, b.orderCount, 'var(--sc-up,#E24B4A)')
+          ? row(`bid${sealed('bid', i)}`, `买${i + 1}`, b.price, b.volume, b.orderCount, 'var(--sw-up,#E24B4A)')
           : emptyRow('bid', `买${i + 1}`));
       }
     }
@@ -107,54 +106,54 @@ export class DepthBook extends HTMLElement {
     const unitLabel = isAmt ? '额' : '量';
     this.shadowRoot!.innerHTML = `
       <style>
-        :host{display:block;background:var(--sc-bg,#fff);font:11px/1.35 system-ui,-apple-system,sans-serif;color:var(--sc-text,${PALETTE.text})}
+        :host{display:block;background:var(--sw-bg,transparent);font:11px/1.35 system-ui,-apple-system,sans-serif;color:var(--sw-text)}
         .title{display:flex;align-items:center;justify-content:space-between;gap:8px;
-               height:var(--sc-bar-h,${LAYOUT.barH}px);padding:0 8px;box-sizing:border-box;
-               background:var(--sc-bg,#fff);border-bottom:1px solid var(--sc-line,#E3E6EB);
+               height:var(--sw-bar-h,${LAYOUT.barH}px);padding:0 8px;box-sizing:border-box;
+               background:var(--sw-bg,transparent);border-bottom:1px solid var(--sw-line,transparent);
                position:sticky;top:0;z-index:2}
         .title .lead{display:flex;align-items:center;gap:7px;min-width:0}
         .title .name{font:500 11px/1.4 system-ui,-apple-system,sans-serif;
-                     color:var(--sc-text,${PALETTE.text});white-space:nowrap;letter-spacing:.3px}
-        .seg{display:inline-flex;flex:0 0 auto;border:1px solid var(--sc-line,#E3E6EB);border-radius:4px;
-             overflow:hidden;background:var(--sc-panel,#F7F8FA)}
+                     color:var(--sw-text);white-space:nowrap;letter-spacing:.3px}
+        .seg{display:inline-flex;flex:0 0 auto;border:1px solid var(--sw-line,transparent);border-radius:4px;
+             overflow:hidden;background:var(--sw-panel,transparent)}
         .seg button{border:0;background:transparent;padding:1px 6px;cursor:pointer;white-space:nowrap;
-                    color:var(--sc-text,${PALETTE.text});font:10px/1.5 system-ui,-apple-system,sans-serif}
-        .seg button + button{border-left:1px solid var(--sc-line,#E3E6EB)}
-        .seg button:hover{background:var(--sc-line,#E9EDF3)}
-        .seg button:active{background:var(--sc-panel,#E3E8EF)}
+                    color:var(--sw-text);font:10px/1.5 system-ui,-apple-system,sans-serif}
+        .seg button + button{border-left:1px solid var(--sw-line,transparent)}
+        .seg button:hover{background:var(--sw-line,transparent)}
+        .seg button:active{background:var(--sw-panel,transparent)}
         .all-orders{flex:0 0 auto;border:0;background:none;padding:0;cursor:pointer;white-space:nowrap;
-                    color:var(--sc-link,#1B5FBF);font:10px/1.4 system-ui,-apple-system,sans-serif}
+                    color:var(--sw-link);font:10px/1.4 system-ui,-apple-system,sans-serif}
         .all-orders:hover{text-decoration:underline}
         .cols{display:grid;grid-template-columns:40px 1fr 1fr 1fr;gap:4px;align-items:center;
-              height:var(--sc-bar-h,${LAYOUT.barH}px);padding:0 6px;box-sizing:border-box;
-              background:var(--sc-bg,#fff);border-bottom:1px solid var(--sc-line,#E3E6EB);
-              color:var(--sc-muted,${PALETTE.textMuted});font:10px/1 system-ui,-apple-system,sans-serif;
-              letter-spacing:.2px;position:sticky;top:var(--sc-bar-h,${LAYOUT.barH}px);z-index:1}
+              height:var(--sw-bar-h,${LAYOUT.barH}px);padding:0 6px;box-sizing:border-box;
+              background:var(--sw-bg,transparent);border-bottom:1px solid var(--sw-line,transparent);
+              color:var(--sw-muted);font:10px/1 system-ui,-apple-system,sans-serif;
+              letter-spacing:.2px;position:sticky;top:var(--sw-bar-h,${LAYOUT.barH}px);z-index:1}
         .cols span:nth-child(n+2){text-align:right}
         /* 5 档 / 10 档 / compact 全部同一行高，与交易明细虚拟滚动行高一致 */
         .row{position:relative;display:grid;grid-template-columns:40px 1fr 1fr 1fr;gap:4px;
              align-items:center;height:${LAYOUT.rowH}px;padding:0 6px;box-sizing:border-box;
-             line-height:1;border-bottom:1px solid var(--sc-line,#F4F5F7);
+             line-height:1;border-bottom:1px solid var(--sw-line,transparent);
              font-variant-numeric:tabular-nums;overflow:hidden}
         .row > span,.row > b{position:relative;z-index:1}
-        .row .lbl{color:var(--sc-muted,${PALETTE.textMuted})}
-        .row .num{text-align:right;color:var(--sc-muted,${PALETTE.textMuted})}
-        .row.empty,.row.empty .num{color:var(--sc-muted,#C4C9D0)}
+        .row .lbl{color:var(--sw-muted)}
+        .row .num{text-align:right;color:var(--sw-muted)}
+        .row.empty,.row.empty .num{color:color-mix(in srgb,var(--sw-muted) 60%,transparent)}
         .row .bar{position:absolute;right:0;left:auto;top:0;bottom:0;z-index:0}
-        /* 量能底色按主题涨跌色混合，浅色/深色都保持低饱和（旧浏览器用前一条兜底） */
-        .row.ask .bar{background:#E3F4EC;background:color-mix(in srgb,var(--sc-down,#1D9E75) 12%,transparent)}
-        .row.bid .bar{background:#FDE7E7;background:color-mix(in srgb,var(--sc-up,#E24B4A) 12%,transparent)}
-        .row.sealed{font-weight:600;background:#FFF8E8;background:color-mix(in srgb,var(--sc-up,#E24B4A) 8%,transparent)}
-        .row.sealed .lbl{color:var(--sc-up,#B0741A)}
+        /* 量能底色由主题涨跌色派生，浅色 / 深色都保持低饱和 */
+        .row.ask .bar{background:color-mix(in srgb,var(--sw-down) 12%,transparent)}
+        .row.bid .bar{background:color-mix(in srgb,var(--sw-up) 12%,transparent)}
+        .row.sealed{font-weight:600;background:color-mix(in srgb,var(--sw-up) 8%,transparent)}
+        .row.sealed .lbl{color:var(--sw-up)}
         .limit-note{display:flex;align-items:center;justify-content:center;min-height:120px;
                     margin:10px 8px;padding:8px 10px;border-radius:6px;text-align:center;
                     font:11px/1.5 system-ui,-apple-system,sans-serif;font-weight:600}
-        .limit-note.up{background:#FDECEC;background:color-mix(in srgb,var(--sc-up,#E24B4A) 10%,transparent);
-                       color:var(--sc-up,#C0392B);border:1px solid color-mix(in srgb,var(--sc-up,#E24B4A) 30%,transparent)}
-        .limit-note.down{background:#E6F5EE;background:color-mix(in srgb,var(--sc-down,#1D9E75) 10%,transparent);
-                         color:var(--sc-down,#0E7A55);border:1px solid color-mix(in srgb,var(--sc-down,#1D9E75) 30%,transparent)}
-        .split{height:1px;background:var(--sc-line,#E3E6EB);
-               margin:calc((var(--sc-split-h,${LAYOUT.splitH}px) - 1px)/2) 6px}
+        .limit-note.up{background:color-mix(in srgb,var(--sw-up) 10%,transparent);
+                       color:var(--sw-up);border:1px solid color-mix(in srgb,var(--sw-up) 30%,transparent)}
+        .limit-note.down{background:color-mix(in srgb,var(--sw-down) 10%,transparent);
+                         color:var(--sw-down);border:1px solid color-mix(in srgb,var(--sw-down) 30%,transparent)}
+        .split{height:1px;background:var(--sw-line,transparent);
+               margin:calc((var(--sw-split-h,${LAYOUT.splitH}px) - 1px)/2) 6px}
       </style>
       <div class="title"><span class="lead">
         <span class="name">盘口</span>

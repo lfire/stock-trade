@@ -54,3 +54,61 @@ test('自动生成的 .d.ts 可被第三方 strict TS 项目消费', () => {
     rmSync(probe, { force: true });
   }
 });
+
+// workspace 跨框架适配层：根入口导出的 API / 类型契约（仅 tsc --noEmit 编译，不在 Node 里执行根入口）
+const probeWorkspace = join(root, '__types_consumer_workspace_probe.ts');
+
+const WORKSPACE_SOURCE = `
+import {
+  createWorkspaceController, bindWorkspace, vWorkspace, StockWorkspace,
+} from "./dist/index.js";
+import type {
+  WorkspaceProps, WorkspaceConfig, WorkspaceController, WorkspaceHost,
+  WorkspaceEventMap, ChartDataset,
+} from "./dist/index.js";
+
+const host: WorkspaceHost = new EventTarget() as WorkspaceHost;
+const data: ChartDataset | null = null;
+const config: Partial<WorkspaceConfig> = { mode: "candle", theme: "dark", intradayDays: 3 };
+const onThemeChange = (e: CustomEvent<{ theme: string | null; palette: Record<string, string> }>): void => {
+  void e.detail.theme;
+};
+const props: WorkspaceProps = {
+  data,
+  config,
+  on: {
+    "theme-change": (e) => { void e.detail; },
+    "chart-error": (e) => { void e.detail; },
+  },
+  onThemeChange,
+};
+const controller: WorkspaceController | undefined = createWorkspaceController(host, props);
+controller?.update(props);
+controller?.destroy();
+const cleanup = bindWorkspace(host, props);
+cleanup?.();
+vWorkspace.mounted(host, { value: props });
+vWorkspace.updated(host, { value: props });
+vWorkspace.unmounted(host);
+type ReadyEvent = WorkspaceEventMap["workspace-ready"];
+const ready: ReadyEvent | null = null;
+const ws: StockWorkspace = document.createElement("stock-workspace");
+ws.data = data;
+const cfgRo: Readonly<WorkspaceConfig> = ws.config;
+void [ready, cfgRo, ws, onThemeChange, config];
+`;
+
+test('workspace 适配层 API 与类型契约可被第三方 strict TS 项目消费', () => {
+  writeFileSync(probeWorkspace, WORKSPACE_SOURCE, 'utf8');
+  try {
+    const out = execFileSync(process.execPath, [
+      tsc, '--noEmit', '--strict', '--lib', 'es2022,dom',
+      '--module', 'esnext', '--moduleResolution', 'bundler', probeWorkspace,
+    ], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.equal(out.trim(), '');
+  } catch (e) {
+    assert.fail(`workspace 消费者类型探针编译失败：\n${String(e.stdout || '')}${String(e.stderr || '')}`);
+  } finally {
+    rmSync(probeWorkspace, { force: true });
+  }
+});

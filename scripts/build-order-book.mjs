@@ -5,14 +5,14 @@
 // 盘口字段接口 stock/get 返回 data:{}，公开源无历史 Level-2 逐笔委托（见 SOURCES.md）。
 // 因此按「当日分时价格轨迹 + 收盘十档快照」做确定性拟真 mock：
 //   1. 市价随时间从分时曲线插值，买/卖委托价分别挂在市价下方/上方 N 档（0.01 步长）；
-//   2. 委托量一律 100 股整数倍，档位按几何衰减分布，含少量十档外委托；
+//   2. 委托量一律 LOT_SIZE 股整数倍，档位按几何衰减分布，含少量十档外委托；
 //   3. 撤单遵守上交所规则：9:20–9:25、14:57–15:00 不可撤，其余时段按概率撤单；
 //   4. 收盘时刻未撤单挂单按价格聚合，与 depth 十档各档 volume 严格闭合。
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { limitPrices, limitRateFor } from './limit-rules.mjs';
 import { r2, mulberry32 } from './shared.mjs';
-import { TIME } from '../dist/core/market-constants.js';
+import { TIME, LOT_SIZE } from '../dist/core/market-constants.js';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,14 +70,14 @@ function pickLevel() {
   }
   return 20;
 }
-// 委托量：100 股整数倍，小额为主、偶有大单
+// 委托量：LOT_SIZE 股整数倍，小额为主、偶有大单
 function pickVolume() {
   const r = rnd();
   const lots = r < 0.62 ? 1 + Math.floor(rnd() * 5)
     : r < 0.9 ? 6 + Math.floor(rnd() * 15)
       : r < 0.985 ? 21 + Math.floor(rnd() * 30)
         : 60 + Math.floor(rnd() * 60);
-  return lots * 100;
+  return lots * LOT_SIZE;
 }
 
 let seq = 0, tradeSeq = 0;
@@ -91,7 +91,8 @@ function push(o) {
 /**
  * 真实 Level-2 委托生命周期：NEW 入簿 → FILL 按量扣减 → CANCEL 撤掉剩余量。
  * volume 语义随事件变化：NEW = 委托总量、FILL = 本次成交量、CANCEL = 本次撤单量（即剩余量）。
- * origVolume / remainVolume / origOrdId / tradeId 用于守恒校验与委托号关联。
+ * level / phase / snapshot / tag / trend / origVolume / remainVolume / tradeId / cancelOf
+ * 仅作生成期内存状态保留，最终写盘时按 7 字段契约投影，不落进 JSON。
  */
 function emit(time, price, volume, side, action, level, phase, opts = {}) {
   const { snapshot = false, origOrdId = null, origVolume = volume,
@@ -142,9 +143,9 @@ for (const t of slots) {
   // 1) 部分成交：逐笔明细只在连续竞价发生，按量扣减剩余量，委托继续留在簿里
   if (phase === 'continuous' && r < 0.22 && pool.length) {
     const x = pool[Math.floor(rnd() * pool.length)];
-    const lots = Math.floor(x.remain / 100);
+    const lots = Math.floor(x.remain / LOT_SIZE);
     const fillLots = Math.min(lots, 1 + Math.floor(rnd() * Math.min(lots, 20)));
-    const fillVol = Math.max(100, fillLots * 100);
+    const fillVol = Math.max(LOT_SIZE, fillLots * LOT_SIZE);
     x.remain -= fillVol;
     const tradeId = `T${String(++tradeSeq).padStart(6, '0')}`;
     emit(fmt(t), x.rec.price, fillVol, x.rec.side, 'FILL', x.rec.level, phase, {
@@ -172,15 +173,15 @@ emit('09:30:01', limitLo, 20000, 'B', 'NEW', Math.round((midAt(OPEN) - limitLo) 
 emit('09:30:01', limitHi, 20000, 'S', 'NEW', Math.round((limitHi - midAt(OPEN)) / 0.01), 'continuous');
 
 // ---------------------------------------------------------------- 2. 收盘存活挂单（与十档快照闭合）
-// 既有 depth 个别档位存在 orderCount > volume/100（如 200 股 7 笔）的历史 mock 瑕疵，
-// 这里按「每笔至少 1 手」约束拆单：逐档总量严格等于 depth.volume，笔数取合理上限。
+// depth 每档仅 price / volume（股）；orderCount 不再落盘，改由本脚本按该档股数确定性拆单，
+// 逐档总量严格等于 depth.volume，运行时再从 orders 聚合回 orderCount。
 const snapLevels = [
   ...depth.bids.map((d, i) => ({ ...d, side: 'B', level: i + 1 })),
   ...depth.asks.map((d, i) => ({ ...d, side: 'S', level: i + 1 })),
 ];
 for (const lv of snapLevels) {
-  const shares = Math.round(lv.volume / 100);
-  const n = Math.max(1, Math.min(lv.orderCount, shares));
+  const shares = Math.round(lv.volume / LOT_SIZE);
+  const n = Math.max(1, Math.min(shares, 1 + Math.floor(rnd() * 18)));
   // 先按整数手等分，再把余数随机分给若干笔：每笔至少 1 手、总量精确等于该档
   const base = Math.floor(shares / n);
   const parts = Array.from({ length: n }, () => base);
@@ -189,65 +190,18 @@ for (const lv of snapLevels) {
   for (const p of parts) {
     // 收盘竞价时段申报、不可撤；时间落在 14:57–15:00 内均匀分布
     const t = NO_CANCEL_2 + Math.floor(rnd() * (CLOSE - NO_CANCEL_2));
-    emit(fmt(t), lv.price, p * 100, lv.side, 'NEW', lv.level, 'closing', { snapshot: true });
+    emit(fmt(t), lv.price, p * LOT_SIZE, lv.side, 'NEW', lv.level, 'closing', { snapshot: true });
   }
 }
 
 orders.sort((a, b) => (T(a.time) - T(b.time)) || (a.ordId < b.ordId ? -1 : 1));
+// 落盘契约 7 字段；其余状态量（level / phase / snapshot / tag / trend / origVolume /
+// remainVolume / tradeId / cancelOf）仅内存保留，不写进 JSON。
+const ORDERS_FIELDS = ['ordId', 'time', 'price', 'volume', 'side', 'action', 'origOrdId'];
+const serialized = orders.map((o) => Object.fromEntries(ORDERS_FIELDS.map((k) => [k, o[k]])));
 const out = path.join(dir, `orders_${m.tradeDate.replace(/-/g, '')}.json`);
-writeFileSync(out, `${JSON.stringify(orders, null, 0)}\n`);
-
-// ---------------------------------------------------------------- 3. 合并分笔 ↔ 委托号关联
-// trades 是分钟级合并分笔（聚合粒度），真实逐笔明细才带买卖双方委托号；
-// 这里把同一分钟内发生部分成交的委托号挂到合并分笔上，形成可追溯的关联（幂等重写）。
-const tradesFile = path.join(dir, m.files.trades);
-const trades = JSON.parse(readFileSync(tradesFile, 'utf8'));
-const fillsByMinute = new Map();
-for (const o of orders) {
-  if (o.action !== 'FILL') continue;
-  const k = o.time.slice(0, 5);
-  if (!fillsByMinute.has(k)) fillsByMinute.set(k, []);
-  fillsByMinute.get(k).push(o.origOrdId);
-}
-for (const tr of trades) {
-  tr.ordIds = [...new Set(fillsByMinute.get(String(tr.time).slice(0, 5)) || [])].slice(0, 8);
-}
-writeFileSync(tradesFile, `${JSON.stringify(trades)}\n`);
-
-// build-sample-data 重跑会覆盖 manifest，这里幂等补回 orders 键（files + provenance）；
-// depthFull / depthScenarios 已改为运行时派生，不再写盘、不再登记。
-const manifestFile = path.join(dir, 'manifest.json');
-const meta = JSON.parse(readFileSync(manifestFile, 'utf8'));
-const ordersFile = path.basename(out);
-let metaChanged = false;
-if (meta.files.orders !== ordersFile) { meta.files.orders = ordersFile; metaChanged = true; }
-if (!meta.provenance.orders) {
-  meta.provenance.orders = { availability: 'level2-licensed', source: 'mock', licensed: true };
-  metaChanged = true;
-}
-if (metaChanged) writeFileSync(manifestFile, `${JSON.stringify(meta)}\n`);
-
-// 幂等追加：让 SOURCES.md 覆盖本脚本写盘的 orders（build-sample-data 只写 5 个落盘输入）
-const sourcesFile = path.join(dir, 'SOURCES.md');
-const derivedNote = `<!-- derived-data -->
-## 派生数据集与 Level-2 授权边界（build-order-book.mjs）
-
-- \`orders\`（逐笔委托 NEW/FILL/CANCEL）是本脚本写盘的**确定性 mock** 落盘输入，固定种子 \`mulberry32(2026111302)\`；与 \`auction\` / \`trades\` / \`depth\` 同为 Level-2 示意数据，统一登记在 \`manifest.files\` / \`manifest.provenance\`。公开接口无历史 Level-2 逐笔委托（见 \`src/data/raw/em_order_attempt.json\`）。本脚本还把同一分钟内部分成交的委托号幂等关联到合并分笔 \`trades.ordIds\`。
-- **数据可获得性**：按《证券交易所管理办法》第 38 条与沪深交易规则 5.1.3，交易所法定公开的是日频行情表与集合竞价即时行情（参考价/匹配量/未匹配量）；**十档盘口、逐笔明细、逐笔委托属 Level-2 增值行情**，真实数据需向上证所信息网络 / 深圳证券信息申请展示或非展示许可，且不得自行复制、转发或开发衍生品。本项目示例数据 \`license: 'public-demo'\`、\`requiresAuthorization: true\`，**非真实行情**。
-- \`chips\` / \`intradayMulti\` / \`depthFull\` / \`depthScenarios\` 由 src/algorithms 在运行时派生，不落盘、不作为输入，详见上文「运行时派生数据集」。
-- 逐数据集来源与授权摘要统一登记在 \`manifest.provenance\`（6 个落盘输入），供消费者一次读取。
-
-<!-- /derived-data -->`;
-if (existsSync(sourcesFile)) {
-  const prev = readFileSync(sourcesFile, 'utf8');
-  const start = prev.indexOf('<!-- derived-data -->');
-  const end = prev.indexOf('<!-- /derived-data -->');
-  const next = start >= 0 && end > start
-    ? prev.slice(0, start) + derivedNote + prev.slice(end + '<!-- /derived-data -->'.length)
-    : `${prev.trimEnd()}\n\n${derivedNote}\n`;
-  writeFileSync(sourcesFile, next);
-}
+writeFileSync(out, `${JSON.stringify(serialized)}\n`);
 
 const active = orders.filter((o) => o.snapshot);
-console.log(`挂单数据：${orders.length} 条（收盘存活 ${active.length} 条）| NEW ${orders.filter((o) => o.action === 'NEW').length} / FILL ${orders.filter((o) => o.action === 'FILL').length} / CANCEL ${orders.filter((o) => o.action === 'CANCEL').length} | 合并分笔已关联 ${trades.filter((t) => t.ordIds?.length).length}/${trades.length} 条`);
+console.log(`挂单数据：${orders.length} 条（收盘存活 ${active.length} 条）| NEW ${orders.filter((o) => o.action === 'NEW').length} / FILL ${orders.filter((o) => o.action === 'FILL').length} / CANCEL ${orders.filter((o) => o.action === 'CANCEL').length}`);
 console.log(`输出 ${out}（depthFull / depthScenarios 由 src/algorithms 运行时派生，不再写盘）`);

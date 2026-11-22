@@ -9,6 +9,7 @@ import type { Bar, IntradayPoint, AuctionPoint } from '../types';
 import { AUCTION_STEP_SEC } from '../core/market-constants';
 import { r2 } from './rounding';
 import { mulberry32 } from './random';
+import { isoToDateBase } from './market-time';
 import { matchAuction, makeOrderBook } from './auction-match';
 
 type Random = () => number;
@@ -82,7 +83,7 @@ function buildOpenAuction(
       targetMatched + (buyBias ? 0 : gap));
     const m = matchAuction(ob.bids, ob.asks, preClose);   // 开盘并列价取最接近前收
     pts.push({
-      timestamp: Date.parse(`${iso}T${time}+08:00`),
+      timestamp: Date.parse(`${isoToDateBase(iso)}T${time}+08:00`),
       time,
       phase: 'open',
       virtualPrice: r2(m.price),
@@ -144,7 +145,7 @@ function buildClosingAuction(
     const ob = makeOrderBook(center, targetMatched + gap, targetMatched);  // 收盘买方堆积为主
     const m = matchAuction(ob.bids, ob.asks, startPrice);  // 收盘并列价参考最近成交价
     pts.push({
-      timestamp: Date.parse(`${iso}T${time}+08:00`),
+      timestamp: Date.parse(`${isoToDateBase(iso)}T${time}+08:00`),
       time,
       phase: 'close',
       virtualPrice: r2(m.price),

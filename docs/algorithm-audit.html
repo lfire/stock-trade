@@ -44,15 +44,28 @@
   <h1>股票图表组件 · 算法口径核验报告</h1>
   <div class="sub">核验日期 2026-11-18 ｜ 范围：均线 / MACD / KDJ / 量比 / 副图 / 周期聚合 / 筹码峰 / 竞价 / 盘口 / A 股业务口径 ｜ 标的：600519.SH 示例数据（截至 2026-11-13，前复权）</div>
 
+  <div class="card" style="border-left:5px solid var(--down);background:#f0faf5">
+    <strong><span class="tag t-ok">当前状态</span> 说明卡（截至 2026-11-21）</strong>
+    <ul style="margin-bottom:0">
+      <li>概念与术语以 <code>docs/00-概念总览与术语词典.md</code> 为准；本文为 2026-11-18 基于当时 <code>.js</code> 源码的算法口径核验记录，正文结论、偏差表、KPI 均为核验当时值（历史分节数字不动）。</li>
+      <li><span class="tag t-ok">已修复</span> P0 三项（EMA 冷启动 / 量比口径 / 分钟 K 跨午休）与 P1 全部已于 2026-11-19 修复，详见下方绿色「2026-11-19 更新」状态卡（该卡「以本状态卡为准」的说明仍保留）。</li>
+      <li>现状：<code>src/**/*.ts</code> 66 个实现模块 + <code>global.d.ts</code>、0 显式 any；算法按概念收口 <code>src/algorithms/</code> 18 单元 + <code>ALGORITHMS</code>，架构收口 <code>src/architecture/</code> 6 文件；<code>scripts/shared.mjs</code> / <code>limit-rules.mjs</code> / <code>auction-match.mjs</code> 薄 re-export <code>dist/algorithms</code>；<code>src/events.ts</code> 统一 <code>emitEvent</code>。<strong>模块化阶段二已落地</strong>：12 模块 / 4 预设，<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据；组件内置 light/dark 双主题、<code>#btn-theme</code> 可点击切换。</li>
+      <li>数据：<strong>5 个落盘 JSON</strong>（bars 935 / intraday 267 / auction 90 / depth 1 快照 / orders 1315）+ manifest + SOURCES + raw；chips / intradayMulti / depthFull / depthScenarios / <strong>trades</strong> 5 个数据集由 <code>src/core/derive-dataset.ts</code> 运行时派生、不落盘（逐笔 <code>buildTradeSeries(intraday)</code> 生成 495 条）；派生后逐笔 495、委托 1710、多日 1210、筹码 150 档·120 日、全景 53 买/33 卖；<code>manifest.files/provenance</code> 5 键、<code>level2-licensed</code> 仅 <code>depth</code>/<code>orders</code> 2 个。</li>
+      <li>跨图闭合全部修复（<code>docs/00</code> §3.3 列 8 条关联、<code>verify.mjs</code> 含 6 条数值闭合断言）；当前验收 <code>check</code> 通过 / <code>test</code> 97/97 / <code>typecheck</code> 0 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 4 个 preset CDP 场景 0 JS 错误。</li>
+      <li><span class="tag t-ok">本轮·输入层精简</span> 2026-11-20 后续完成输入层清理：<code>manifest.files/provenance</code> 收敛为 5 键、<code>trades_20261113.json</code> 删除且逐笔运行时生成 495 条、需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个（<code>auction</code> 为 <code>l1-intraday-only</code>）；<code>bars_1d.json</code> 恢复东财 push2his 原生 11 列（13 字段、无 <code>limitState</code>/<code>source</code>），四态由 <code>manifest.demoPatterns</code>（4 项）记录、<code>deriveDataset()</code> 内存叠加，落盘不再注入改写 OHLC；落盘字段精简、运行时补齐累计量额/均价等、对外 <code>ChartDataset</code> 语义不变，<code>units</code> 5 组统一手/股/% 口径（手股换算统一 <code>LOT_SIZE</code>）、删除 11 个零消费者字段；<code>verify.mjs</code> 6 条指标基准经独立脚本重算（MACD 柱末 −1.927041、KDJ K末 51.533313 / D末 63.206664，另 3 条未变），分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持。</li>
+    </ul>
+  </div>
+
   <div class="card tldr">
-    <div class="verdict">结论：目前不能满足「算法不偏差、不出错」</div>
-    <p>组件化工程做得很扎实，但<strong>由原始数据计算得出的指标里有 3 处与通达信 / 同花顺 / 上交所口径存在可量化的实质偏差</strong>，另有 4 处口径或命名错位、1 处校验方法缺陷。KDJ、MACD 柱倍率、均价线 VWAP、周月聚合、交易时段等主体部分是正确的。</p>
+    <div class="verdict">结论（2026-11-18 核验当时）：不能满足「算法不偏差、不出错」（该结论已于 2026-11-19 失效，P0/P1 全部修复）</div>
+    <p>组件化工程做得很扎实，但<strong>由原始数据计算得出的指标里有 3 处与通达信 / 同花顺 / 上交所口径存在可量化的实质偏差（核验当时，均已修复）</strong>，另有 4 处口径或命名错位、1 处校验方法缺陷。KDJ、MACD 柱倍率、均价线 VWAP、周月聚合、交易时段等主体部分是正确的。</p>
+    <p class="src">注：以下 5 条为核验当时发现，均已于 2026-11-19 修复。</p>
     <ul>
-      <li><span class="tag t-bad">阻断</span> <strong>EMA 首值冷启动 + 无预热期</strong>：MACD 前段 DIF 与标准口径符号相反，有效段最大偏差 <code>15.44</code>；默认视口正好落在偏差区。</li>
-      <li><span class="tag t-bad">阻断</span> <strong>量比用日线口径</strong>：盘中 09:35 标准值 <code>2.4691</code>，组件恒为 <code>1.2823</code>；仅收盘恰好相等。</li>
-      <li><span class="tag t-bad">阻断</span> <strong>分钟 K 按序号分组</strong>：5m / 30m / 60m / 120m <strong>各有 1 根跨 11:30–13:00 午休</strong>。</li>
-      <li><span class="tag t-warn">重要</span> 筹码三角分布峰值假设、平均成本命名错位、涨跌停 0.5% 容差与固定 ±10%、竞价虚拟价未按最大成交量原则撮合。</li>
-      <li><span class="tag t-warn">披露</span> 筹码 / 竞价 / 逐笔 / 十档 / 委托流全为<strong>固定种子合成数据</strong>，不能用于验证与真实 A 股市场的吻合度。</li>
+      <li><span class="tag t-bad">阻断</span> <span class="tag t-ok">当时·已修</span> <strong>EMA 首值冷启动 + 无预热期</strong>：MACD 前段 DIF 与标准口径符号相反，有效段最大偏差 <code>15.44</code>；默认视口正好落在偏差区。</li>
+      <li><span class="tag t-bad">阻断</span> <span class="tag t-ok">当时·已修</span> <strong>量比用日线口径</strong>：盘中 09:35 标准值 <code>2.4691</code>，组件恒为 <code>1.2823</code>；仅收盘恰好相等。</li>
+      <li><span class="tag t-bad">阻断</span> <span class="tag t-ok">当时·已修</span> <strong>分钟 K 按序号分组</strong>：5m / 30m / 60m / 120m <strong>各有 1 根跨 11:30–13:00 午休</strong>。</li>
+      <li><span class="tag t-warn">重要</span> <span class="tag t-ok">当时·已修</span> 筹码三角分布峰值假设、平均成本命名错位、涨跌停 0.5% 容差与固定 ±10%、竞价虚拟价未按最大成交量原则撮合。</li>
+      <li><span class="tag t-warn">披露</span> <span class="tag t-ok">当时·已修</span> 筹码 / 竞价 / 逐笔 / 十档 / 委托流全为<strong>固定种子合成数据</strong>，不能用于验证与真实 A 股市场的吻合度。</li>
     </ul>
   </div>
 
@@ -67,6 +80,7 @@
     </ul>
   </div>
 
+  <p class="src">以下为核验当时的偏差证据，现状均为 0 / 已修复</p>
   <div class="kpis">
     <div class="kpi"><b class="red">15.44</b><span>MACD DIF 有效段最大绝对偏差</span></div>
     <div class="kpi"><b class="green">0.000</b><span>KDJ 与通达信 SMA(X,3,1) 最大偏差</span></div>
@@ -86,20 +100,21 @@
   </div>
 
   <h2>二、逐模块核验结果</h2>
+  <p class="src">注：本表为基于当时 <code>.js</code> 源码的记录；现状已 TS 化，算法收口 <code>src/algorithms/</code> 18 模块，证据路径仅作历史索引。</p>
   <table>
-    <thead><tr><th>模块</th><th>项目实现</th><th>标准 / 主流口径</th><th>判定</th><th>证据</th></tr></thead>
+    <thead><tr><th>模块</th><th>项目实现（当时）</th><th>标准 / 主流口径</th><th>判定</th><th>证据</th></tr></thead>
     <tbody>
       <tr><td>EMA</td><td><code>prev = values[0]</code> 冷启动，全长有值</td><td>前 N 个值取简单平均作首个 EMA，前 N−1 根为 null，α=2/(N+1) 递推，需 ≥3×26 根预热</td><td><span class="tag t-bad">偏差</span></td><td>indicators.js:15–25</td></tr>
       <tr><td>MACD</td><td>DIF=EMA12−EMA26；DEA=EMA9(DIF)；柱=2×(DIF−DEA)</td><td>公式一致；但两条价格 EMA 与 DEA 的初值/预热必须按上条处理</td><td><span class="tag t-bad">前段偏差</span></td><td>indicators.js:33–44</td></tr>
       <tr><td>KDJ</td><td>RSV 9 日；K=⅔K'+⅓RSV；D=⅔D'+⅓K；J=3K−2D；初值 50</td><td>通达信 <code>SMA(RSV,3,1)</code> / <code>SMA(K,3,1)</code> 完全等价</td><td><span class="tag t-ok">一致</span></td><td>indicators.js:46–59（实测 0 偏差）</td></tr>
-      <tr><td>量比</td><td>当日量 ÷ 前 5 日平均<strong>日</strong>量；分时面板也用日线 bars</td><td>(当日累计量 ÷ 当日累计开市分钟) ÷ (前 5 日平均日量 ÷ 240)；全天 240 分钟、扣午休</td><td><span class="tag t-bad">口径错配</span></td><td>indicators.js:62–74；indicator-pane.js:63–65</td></tr>
-      <tr><td>MA / 均价线</td><td>MA 为算术滑动平均；分时均价 = 累计额 ÷ (累计量(手)×100)</td><td>MA(CLOSE,N)；分时均价线 = 累计成交额 ÷ 累计成交量（VWAP）</td><td><span class="tag t-ok">一致</span></td><td>indicators.js:4–13；build-sample-data.mjs:132</td></tr>
+      <tr><td>量比</td><td>当日量 ÷ 前 5 日平均<strong>日</strong>量；分时面板也用日线 bars</td><td>(当日累计量 ÷ 当日累计开市分钟) ÷ (前 5 日平均日量 ÷ 240)；全天 240 分钟、扣午休</td><td><span class="tag t-bad">口径错配</span></td><td>当前实现见 <code>src/compute/indicators.ts</code> / <code>src/elements/indicator-pane.ts</code></td></tr>
+      <tr><td>MA / 均价线</td><td>MA 为算术滑动平均；分时均价 = 累计额 ÷ (累计量(手)×100)（当时数据源以手计量；现状为股口径 `累计额 ÷ 累计量`）</td><td>MA(CLOSE,N)；分时均价线 = 累计成交额 ÷ 累计成交量（VWAP）</td><td><span class="tag t-ok">一致</span></td><td>indicators.js:4–13；build-sample-data.mjs:132</td></tr>
       <tr><td>分钟 K 聚合</td><td>按<strong>序号</strong>每 size 个分时点一组，仅过滤 time≤15:00</td><td>按交易时段边界切分：上午 9:30–11:30、下午 13:00–15:00 各自独立成组；30m 应为 8 根</td><td><span class="tag t-bad">错误</span></td><td>bar-aggregator.js:85–112</td></tr>
       <tr><td>周/月/季/年</td><td>open 首、close 末、high/low 极值、量额求和、preClose 取首根</td><td>同口径；ISO 周（周一起）与自然周一致</td><td><span class="tag t-ok">一致</span></td><td>bar-aggregator.js:19–78</td></tr>
       <tr><td>筹码分布模型</td><td><code>stock×=(1−turn)</code>，新筹码 <code>turn·w/Σw</code>；三角分布峰 = (O+C+H+L)/4；150 档 / 120 日 / 前复权</td><td>标准递推 <code>Chip(t,p)=Vol(t,p)·T+Chip(t−1,p)·(1−T)</code> 同构；三角分布峰应在<strong>当日成交均价（额/量）</strong>；衰减系数默认 1</td><td><span class="tag t-warn">峰值假设偏差</span></td><td>build-sample-data.mjs:170–208</td></tr>
       <tr><td>筹码 9 项统计</td><td>分位 at(0.05/0.95/0.15/0.85/0.5)；集中度 =(高−低)/(高+低)；获利比例 = Σ(p≤close)</td><td>COST(5)/COST(95)/COST(15)/COST(85)；同花顺面板集中度同式（SCR 版本多除 2）；WINNER(C) 同式</td><td><span class="tag t-ok">公式一致</span><br><span class="tag t-warn">命名错位</span></td><td>build-sample-data.mjs:148–165</td></tr>
       <tr><td>「平均成本」显示</td><td>「平均成本」= 加权平均 Σ(p·w)/Σw；「居中成本」= COST(50)</td><td>软件面板「平均成本」= COST(50)（中位成本）；加权平均成本是另一统计量</td><td><span class="tag t-warn">术语相反</span></td><td>stock-chart.js:305–319</td></tr>
-      <tr><td>涨跌停</td><td>固定 ±10%；<code>eps=preClose×0.005</code> 容差判定；四舍五入到分</td><td>主板 10% / 创业科创 20% / ST 5% / 北交所 30%；容差应为最小变动单位 0.01 元量级</td><td><span class="tag t-warn">通用性+精度</span></td><td>build-sample-data.mjs:62–74；verify.mjs:38–48</td></tr>
+      <tr><td>涨跌停</td><td>固定 ±10%；<code>eps=preClose×0.005</code> 容差判定；四舍五入到分</td><td>主板 10% / 创业科创 20% / ST 5% / 北交所 30%；容差应为最小变动单位 0.01 元量级（现状已收紧为 0.001 元，小于 1 tick）</td><td><span class="tag t-warn">通用性+精度</span></td><td>build-sample-data.mjs:62–74；verify.mjs:38–48</td></tr>
       <tr><td>集合竞价虚拟价</td><td>硬编码阶梯收敛到开盘价 + 随机扰动；匹配量按 k^1.7 / k^1.5 拟真</td><td>上交所 3.5.2：最大成交量原则、高于该价买 / 低于该价卖全成交、同价至少一方全成交；并列取未成交量最小</td><td><span class="tag t-warn">示意非撮合</span></td><td>build-sample-data.mjs:236–292</td></tr>
       <tr><td>交易时段 / 撤单</td><td>9:15–9:25、9:30–11:30、13:00–15:00、14:57–15:00；分钟≤19 可撤</td><td>9:15–9:20 可撤、9:20–9:25 不可撤，14:57–15:00 不可撤；收盘竞价沪深均有</td><td><span class="tag t-ok">主口径一致</span></td><td>chart-context.js:565,576；build-order-book.mjs:141</td></tr>
       <tr><td>校验有效性</td><td>涨跌停用同一 0.10 / 0.005 常量重算；MACD / KDJ / VOL_RATIO 只查长度与 finite</td><td>应与独立基准或预置期望数值做数值回归</td><td><span class="tag t-warn">循环论证</span></td><td>verify.mjs:97–115, 38–48</td></tr>
@@ -153,31 +168,31 @@
 
   <h3>3.4 涨跌停判定容差</h3>
   <div class="note">
-    以 <code>eps = preClose × 0.005</code>（0.5%）复核 935 根日 K：命中 4 根，其中 <strong>2 根收盘价并不等于四舍五入后的涨跌停价</strong>，属于潜在误标。前复权数据下正确做法是「按前复权昨收 ×(1±比例) 四舍五入到 0.01 元」并允许约 0.01 元量级误差，而非 0.5% 相对容差。当前示例标的 600519.SH 属沪市主板，±10% 恰好正确；但组件未做板块识别，遇到创业板 / 科创板 / ST / 北交所会算错。
+    （核验当时）以 <code>eps = preClose × 0.005</code>（0.5%）复核 935 根日 K：命中 4 根，其中 <strong>2 根收盘价并不等于四舍五入后的涨跌停价</strong>，属于潜在误标。前复权数据下正确做法是「按前复权昨收 ×(1±比例) 四舍五入到 0.01 元」并允许约 0.01 元量级误差，而非 0.5% 相对容差。当前示例标的 600519.SH 属沪市主板，±10% 恰好正确；但组件未做板块识别，遇到创业板 / 科创板 / ST / 北交所会算错。（现状按板块比例 + 0.001 元容差）
   </div>
 
   <h2>四、数据真实性（决定「能否用真实市场验证」）</h2>
   <table>
     <thead><tr><th>数据集</th><th>性质</th><th>来源 / 生成</th><th>可验证性</th></tr></thead>
     <tbody>
-      <tr><td>bars（日 K，935 根）</td><td><span class="tag t-ok">真实为主</span></td><td>东财前复权日 K，另注入 4 根拟真涨跌停形态</td><td>可用于指标公式验证</td></tr>
+      <tr><td>bars（日 K，935 根）</td><td><span class="tag t-ok">真实为主</span></td><td>东财前复权日 K，另注入 4 根拟真涨跌停形态（核验当时；现已恢复东财原生、四态改由 <code>manifest.demoPatterns</code> 运行时叠加）</td><td>可用于指标公式验证</td></tr>
       <tr><td>intraday（分时，267 点）</td><td><span class="tag t-ok">真实</span></td><td>腾讯分时累计量额，差分出分钟增量与 VWAP</td><td>可用于均价 / 量比 / 分钟 K 验证</td></tr>
-      <tr><td>chips（筹码 150 档 / 120 日）</td><td><span class="tag t-warn">模型自算</span></td><td>公开 cyq 接口空响应，按真实日 K + 换手率三角分布模型生成</td><td>只能验证<strong>模型口径</strong>，不是真实持仓成本</td></tr>
-      <tr><td>auction / trades / depth / orders / depthFull / depthScenarios</td><td><span class="tag t-warn">合成 mock</span></td><td>固定种子 mulberry32(20261113 / 2026111302) 确定性生成</td><td><strong>不能</strong>用于验证与真实 A 股市场的吻合度</td></tr>
+      <tr><td>chips（筹码 150 档 / 120 日）</td><td><span class="tag t-warn">模型自算</span></td><td>公开 cyq 接口空响应，按真实日 K + 换手率三角分布模型生成（当时落盘 JSON；现状运行时派生、不落盘）</td><td>只能验证<strong>模型口径</strong>，不是真实持仓成本</td></tr>
+      <tr><td>auction / trades / depth / orders（当时落盘 mock 集）；depthFull / depthScenarios 现由 <code>src/algorithms/</code> 运行时派生、不落盘</td><td><span class="tag t-warn">合成 mock</span></td><td>固定种子 mulberry32(20261113 / 2026111302) 确定性生成</td><td><strong>不能</strong>用于验证与真实 A 股市场的吻合度</td></tr>
     </tbody>
   </table>
   <p class="src">筹码分布本身是估算模型（交易所不公开持仓成本）；通达信 / 同花顺在衰减系数、日内分布、分桶精度、复权方式上参数不同，跨软件出现零点几个百分点差异属建模差异而非 bug。本组件集中度公式与同花顺面板口径一致（不除 2），若与通达信 SCR 指标对照需再除 2。</p>
 
-  <h2>五、修复优先级（按投入产出）</h2>
+  <h2>五、修复优先级（2026-11-18 当时；全部已完成）</h2>
   <table>
-    <thead><tr><th>优先级</th><th>动作</th><th>验收标准</th></tr></thead>
+    <thead><tr><th>优先级</th><th>动作</th><th>验收标准</th><th>状态</th></tr></thead>
     <tbody>
-      <tr><td><span class="tag t-bad">P0</span></td><td><code>ema()</code> 改 SMA 初始化 + 前 N−1 根返回 null；<code>macd()</code> 的 DEA 只在 DIF 有效段上递推，无效段不画</td><td>与通达信口径在全部 935 根上逐根误差 &lt; 1e−6（含预热期 null 对齐）</td></tr>
-      <tr><td><span class="tag t-bad">P0</span></td><td>新增分时量比实现（分子含集合竞价、分母按当日累计开市分钟扣午休）；分时面板改用它，日线面板保留日线比值并改名</td><td>09:35 / 10:00 / 收盘三点与独立公式一致；面板标注口径</td></tr>
-      <tr><td><span class="tag t-bad">P0</span></td><td><code>aggregateIntraday</code> 改按交易时段边界分组（上午 / 下午各自切分，余数不足一组各自成根）</td><td>30m 恰好 8 根且无跨午休；5/60/120m 同理</td></tr>
-      <tr><td><span class="tag t-warn">P1</span></td><td>筹码三角峰值改用当日成交均价；「平均成本」改指 COST(50)，加权平均另列并标注；集中度口径在 UI 注明「同花顺面板口径，非 SCR」</td><td>术语与软件面板一致，参数可配置（衰减系数 / 分桶精度 / 分布形状）</td></tr>
-      <tr><td><span class="tag t-warn">P1</span></td><td>涨跌停按板块判定比例，容差改为 0.01 元量级；竞价虚拟价改按最大成交量原则撮合或明确标注「示意数据」</td><td>创业板 / ST 样例不误标；撮合价满足上交所 3.5.2 三原则</td></tr>
-      <tr><td><span class="tag t-warn">P1</span></td><td><code>verify.mjs</code> 引入独立基准期望值（预置几条 MACD / KDJ / 量比的标准数值），替换循环论证断言</td><td>改动公式会导致校验失败，而不是继续全绿</td></tr>
+      <tr><td><span class="tag t-bad">P0</span></td><td><code>ema()</code> 改 SMA 初始化 + 前 N−1 根返回 null；<code>macd()</code> 的 DEA 只在 DIF 有效段上递推，无效段不画</td><td>与通达信口径在全部 935 根上逐根误差 &lt; 1e−6（含预热期 null 对齐）</td><td><span class="tag t-ok">已完成</span></td></tr>
+      <tr><td><span class="tag t-bad">P0</span></td><td>新增分时量比实现（分子含集合竞价、分母按当日累计开市分钟扣午休）；分时面板改用它，日线面板保留日线比值并改名</td><td>09:35 / 10:00 / 收盘三点与独立公式一致；面板标注口径</td><td><span class="tag t-ok">已完成</span></td></tr>
+      <tr><td><span class="tag t-bad">P0</span></td><td><code>aggregateIntraday</code> 改按交易时段边界分组（上午 / 下午各自切分，余数不足一组各自成根）</td><td>30m 恰好 8 根且无跨午休；5/60/120m 同理</td><td><span class="tag t-ok">已完成</span></td></tr>
+      <tr><td><span class="tag t-warn">P1</span></td><td>筹码三角峰值改用当日成交均价；「平均成本」改指 COST(50)，加权平均另列并标注；集中度口径在 UI 注明「同花顺面板口径，非 SCR」</td><td>术语与软件面板一致，参数可配置（衰减系数 / 分桶精度 / 分布形状）</td><td><span class="tag t-ok">已完成</span></td></tr>
+      <tr><td><span class="tag t-warn">P1</span></td><td>涨跌停按板块判定比例，容差改为 0.01 元量级；竞价虚拟价改按最大成交量原则撮合或明确标注「示意数据」（现状另补 0.01 步长中间价候选）</td><td>创业板 / ST 样例不误标；撮合价满足上交所 3.5.2 三原则</td><td><span class="tag t-ok">已完成</span></td></tr>
+      <tr><td><span class="tag t-warn">P1</span></td><td><code>verify.mjs</code> 引入独立基准期望值（预置几条 MACD / KDJ / 量比的标准数值），替换循环论证断言（现状 8 条跨图闭合关联）</td><td>改动公式会导致校验失败，而不是继续全绿</td><td><span class="tag t-ok">已完成</span></td></tr>
     </tbody>
   </table>
 
@@ -187,10 +202,13 @@
       <li><strong>一手 / 规范性</strong>：《上海证券交易所交易规则（2026 修订）》3.5.1 / 3.5.2 / 3.6.4（集合竞价成交价三原则、价格取整）；深交所投教「股市入门 300 问」（并列价处理）；财政部 税务总局公告 2023 年第 39 号（印花税，本报告未涉及费用计算）。</li>
       <li><strong>厂商 / 平台</strong>：同花顺问财 MACD 词条（DEA 递推与柱乘 2）、通达信公式合集（<code>SMA(X,N,M)</code>、MACD/KDJ 源码）、同花顺《筹码分布使用指南》（集中度 = (高−低)/(高+低)）、通达信成本分布设置说明（平均 / 三角分布、衰减系数默认 1）。</li>
       <li><strong>二手 / 需核实原文</strong>：中信建投《筹码分布因子系统构建》（递推式 <code>Chip=Vol·T+Chip'(1−T)</code>）；JoinQuant / 2tuan 等技术社区关于 EMA 初值与 TA-Lib 差异的实测文章；「同花顺衰减系数默认 1」为使用者实测，厂商未公开完整参数。</li>
-      <li><strong>本项目</strong>：<code>src/compute/indicators.js</code>、<code>src/core/bar-aggregator.js</code>、<code>src/elements/*</code>、<code>scripts/build-sample-data.mjs</code>、<code>scripts/build-order-book.mjs</code>、<code>scripts/verify.mjs</code>、<code>src/data/*.json</code>；独立复算脚本逐根比对。</li>
+      <li><strong>本项目（核验当时）</strong>：<code>src/compute/indicators.js</code>、<code>src/core/bar-aggregator.js</code>、<code>src/elements/*</code>、<code>scripts/build-sample-data.mjs</code>、<code>scripts/build-order-book.mjs</code>、<code>scripts/verify.mjs</code>、<code>src/data/*.json</code>；独立复算脚本逐根比对（原 <code>.js</code> 路径）。</li>
+      <li><strong>当时</strong>：<code>src/**/*.ts</code> 51 模块 + <code>global.d.ts</code>；算法收口 <code>src/algorithms/</code> 18 单元；架构 <code>src/architecture/</code>；<code>scripts</code> 三处薄 re-export <code>dist/algorithms</code>；数据 6 落盘 + 4 派生；概念定义见 <code>docs/00</code>。</li>
     </ul>
     <p class="src">检索时点 2026-11-18；示例数据截止 2026-11-13。厂商公式以实现目标软件当前版本函数手册为准，软件升级可能调整函数行为。</p>
   </div>
+
+  <p class="src"><strong>处置结论（截至 2026-11-21）</strong>：示例数据输入层已清理为 <code>manifest.files/provenance</code> 5 键（<code>bars/intraday/auction/depth/orders</code>），<code>trades</code> 不再落盘、逐笔由 <code>buildTradeSeries(intraday)</code> 运行时生成 495 条，需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个；<code>bars</code> 恢复东财原生 11 列、四态改由 <code>manifest.demoPatterns</code> 内存叠加，落盘字段精简并由 <code>deriveDataset()</code> 运行时补齐、对外 <code>ChartDataset</code> 语义不变；<code>verify.mjs</code> 6 条指标基准已重算，<code>check</code> 通过 / <code>test</code> 97/97 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 4 个 preset CDP 场景 0 JS 错误、分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持。<strong>模块化阶段二已落地</strong>：12 模块 / 4 预设，<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据；组件内置 light/dark 双主题、<code>#btn-theme</code> 可点击切换。本文 §一~§六偏差表、KPI 与各「当时」括注均为 2026-11-18 核验及历次增补的当时值，历史分节数字不动，当前状态以开头「当前状态说明卡」与本节为准。</p>
 
   <div class="foot">
     <p>本报告为算法口径核验，未对项目源码做任何修改；数值均来自项目自带示例数据与独立复算，不代表任何真实交易日的实时行情。</p>

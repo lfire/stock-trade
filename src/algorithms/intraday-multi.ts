@@ -6,6 +6,7 @@
 import type { Bar, IntradayPoint } from '../types';
 import { r2 } from './rounding';
 import { mulberry32 } from './random';
+import { avgPriceOf } from './vwap';
 
 /** 最近 days 个交易日拼成扁平数组，每点带 tradeDate。 */
 export function buildIntradayMulti(
@@ -42,7 +43,7 @@ export function buildIntradayMulti(
         timestamp: Date.parse(`${b.tradeDate}T${t}:00+08:00`),
         time: t, tradeDate: b.tradeDate,
         source: 'simulated-from-daily-ohlc',   // 历史分钟分时无免费公开源，按当日日 K OHLC 拟真
-        price, avgPrice: r2(cumAmt / cumVol),
+        price, avgPrice: cumVol > 0 ? r2(avgPriceOf(cumAmt, cumVol)) : price,
         volume: vol, amount: amt,
         cumulativeVolume: cumVol, cumulativeAmount: r2(cumAmt),
         session: t <= '11:30' ? 'morning' : 'afternoon',

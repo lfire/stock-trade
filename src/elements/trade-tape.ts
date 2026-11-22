@@ -1,5 +1,5 @@
 // 交易明细：DOM 虚拟滚动表格，与 crosshair 联动。B/S/N 着色，显式标注来源与粒度。
-import { PALETTE, LAYOUT } from '../types';
+import { LAYOUT } from '../types';
 import { emitEvent, CHART_EVENTS } from '../events';
 import type { TradeTick, OrderRecord, TradeTapeViewConfig, TradeTapeMetrics } from '../types';
 
@@ -83,7 +83,7 @@ export class TradeTape extends HTMLElement {
   /** 多组逐笔视图共享滚动位置时使用的读写接口 */
   scrollPosition() { return this.view?.scrollTop || 0; }
   /**
-   * 4 条标题/表头行统一为 --sc-bar-h（由 stock-chart.syncSideBars 按侧栏余数均分下发）；
+   * 4 条标题/表头行统一为 --sw-bar-h（由 stock-chart.syncSideBars 按侧栏余数均分下发）；
    * 视口高度由 CSS calc 自动占满宿主剩余空间，余数已由这 4 条行与买卖间隙消化，
    * 因此视口恰好是整数个 rowH，不会出现半行或底部留白。
    */
@@ -139,48 +139,46 @@ export class TradeTape extends HTMLElement {
   renderShell() {
     const keepScroll = this.view?.scrollTop || 0;
     const total = this.rows.length * this.rowH;
-    // 侧栏态跟随 host 统一分配的 --sc-bar-h；覆盖视图用基准 barH 避免继承侧栏余数
-    const bar = this._windowMode ? `${LAYOUT.barH}px` : `var(--sc-bar-h,${LAYOUT.barH}px)`;
+    // 侧栏态跟随 host 统一分配的 --sw-bar-h；覆盖视图用基准 barH 避免继承侧栏余数
+    const bar = this._windowMode ? `${LAYOUT.barH}px` : `var(--sw-bar-h,${LAYOUT.barH}px)`;
     this.shadowRoot!.innerHTML = `
       <style>
-        :host{display:block;height:100%;background:var(--sc-bg,${PALETTE.background});font:11px/1.35 system-ui,-apple-system,sans-serif;color:var(--sc-text,${PALETTE.text})}
+        :host{display:block;height:100%;background:var(--sw-bg,transparent);font:11px/1.35 system-ui,-apple-system,sans-serif;color:var(--sw-text)}
         .head{display:grid;grid-template-columns:${this.cols};gap:4px;align-items:center;
               height:${bar};padding:0 6px;box-sizing:border-box;
-              background:var(--sc-panel,#fff);border-bottom:1px solid var(--sc-line,#E3E6EB);color:var(--sc-muted,#9AA3AF);font-size:10px;
+              background:var(--sw-panel,transparent);border-bottom:1px solid var(--sw-line,transparent);color:var(--sw-muted);font-size:10px;
               letter-spacing:.2px}
         .view{height:calc(100% - ${bar});
-              overflow:${this._windowMode ? 'hidden' : 'auto'};position:relative;background:var(--sc-bg,${PALETTE.background});
+              overflow:${this._windowMode ? 'hidden' : 'auto'};position:relative;background:var(--sw-bg,transparent);
               scrollbar-width:none;-ms-overflow-style:none}
         .view::-webkit-scrollbar{display:none}
         .spacer{height:${total}px;position:relative}
         .row{position:absolute;left:0;right:0;height:${this.rowH}px;display:grid;
              grid-template-columns:${this.cols};gap:4px;padding:0 6px;align-items:center;
-             box-sizing:border-box;background:var(--sc-bg,${PALETTE.background})}
-        .row.alt{background:var(--sc-panel,#FAFBFC)}
-        .row:hover{background:#EEF4FC;background:color-mix(in srgb,var(--sc-link,#1B5FBF) 10%,transparent)}
-        .row.active,.row.active.alt{background:#FFF4E5;background:color-mix(in srgb,var(--sc-up,#E24B4A) 12%,transparent)}
+             box-sizing:border-box;background:var(--sw-bg,transparent)}
+        .row.alt{background:color-mix(in srgb,var(--sw-panel) 55%,transparent)}
+        .row:hover{background:color-mix(in srgb,var(--sw-link) 10%,transparent)}
+        .row.active,.row.active.alt{background:color-mix(in srgb,var(--sw-up) 12%,transparent)}
         /* 整行按逐笔涨跌着色：A 股习惯涨红跌绿，平盘用中性灰；颜色走 host 变量，随实例主题刷新 */
-        .row.up{color:var(--sc-up,${PALETTE.up})}
-        .row.down{color:var(--sc-down,${PALETTE.down})}
-        .row.flat{color:var(--sc-muted,${PALETTE.textMuted})}
+        .row.up{color:var(--sw-up)}
+        .row.down{color:var(--sw-down)}
+        .row.flat{color:var(--sw-muted)}
         .row .price{font-weight:600}
         .num{text-align:right;font-variant-numeric:tabular-nums}
         .side{text-align:center}
         .tag{display:inline-block;min-width:15px;padding:0 3px;border-radius:3px;font-size:10px;
              font-weight:600;font-style:normal;line-height:16px}
-        .tag.up{background:#FDECEC;color:var(--sc-up,${PALETTE.up});
-                background:color-mix(in srgb,var(--sc-up,#E24B4A) 12%,transparent)}
-        .tag.down{background:#E6F5EE;color:var(--sc-down,${PALETTE.down});
-                  background:color-mix(in srgb,var(--sc-down,#1D9E75) 12%,transparent)}
-        .tag.flat{background:var(--sc-panel,#F1F2F4);color:var(--sc-muted,#6B7280)}
+        .tag.up{color:var(--sw-up);background:color-mix(in srgb,var(--sw-up) 12%,transparent)}
+        .tag.down{color:var(--sw-down);background:color-mix(in srgb,var(--sw-down) 12%,transparent)}
+        .tag.flat{background:color-mix(in srgb,var(--sw-muted) 14%,transparent);color:var(--sw-muted)}
         /* 撤单按被撤委托方向区分：BC 买撤（红系）/ SC 卖撤（绿系），行文字仍为中性灰 */
-        .tag.BC{background:#FDECEC;background:color-mix(in srgb,var(--sc-up,#E24B4A) 12%,transparent);color:var(--sc-up,#C0392B)}
-        .tag.SC{background:#E6F5EE;background:color-mix(in srgb,var(--sc-down,#1D9E75) 12%,transparent);color:var(--sc-down,#0E7A55)}
+        .tag.BC{background:color-mix(in srgb,var(--sw-up) 12%,transparent);color:var(--sw-up)}
+        .tag.SC{background:color-mix(in srgb,var(--sw-down) 12%,transparent);color:var(--sw-down)}
         /* 部分成交：BF 买成交 / SF 卖成交，用细边框与挂单标签区分 */
-        .tag.BF{background:#FDECEC;background:color-mix(in srgb,var(--sc-up,#E24B4A) 12%,transparent);
-                color:var(--sc-up,#A32D2D);border:1px solid color-mix(in srgb,var(--sc-up,#E24B4A) 35%,transparent)}
-        .tag.SF{background:#E6F5EE;background:color-mix(in srgb,var(--sc-down,#1D9E75) 12%,transparent);
-                color:var(--sc-down,#0E7A55);border:1px solid color-mix(in srgb,var(--sc-down,#1D9E75) 35%,transparent)}
+        .tag.BF{background:color-mix(in srgb,var(--sw-up) 12%,transparent);
+                color:var(--sw-up);border:1px solid color-mix(in srgb,var(--sw-up) 35%,transparent)}
+        .tag.SF{background:color-mix(in srgb,var(--sw-down) 12%,transparent);
+                color:var(--sw-down);border:1px solid color-mix(in srgb,var(--sw-down) 35%,transparent)}
       </style>
       <div class="head">${this.headHtml()}</div>
       <div class="view"><div class="spacer"></div></div>`;

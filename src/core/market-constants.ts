@@ -6,7 +6,7 @@
 
 /** 最小价格变动单位（元）与判定容差（1 个最小变动单位 + 浮点余量） */
 export const PRICE_TICK = 0.01;
-export const PRICE_EPS = 0.011;
+export const PRICE_EPS = 0.001;
 
 /** 交易单位：1 手 = 100 股 */
 export const LOT_SIZE = 100;

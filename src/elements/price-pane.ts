@@ -223,8 +223,8 @@ export class PricePane extends PaneElement {
           color: cfg.color || PALETTE.text,
         };
       }) : [];
-    // 已收口到 algorithms/format，后续迁移：万级 1 位小数 / 千分位分组与 format.ts 的
-    // fmtQty、fmtMoney（2 位小数、无分组）口径不一致，直接替换会改动头部明细显示，故暂留本地实现保持行为不变。
+    // 数值换算与 trim 收口在 algorithms/format；本处只保留头部行情的展示策略（万级 1 位小数、
+    // 千分位分组、单位后缀），与 format.ts 的 2 位小数无分组是有意差异，不是待迁移的重复实现。
     const fmtQty = (v: number) => v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿股`
       : v >= 1e4 ? `${(v / 1e4).toFixed(1)}万股` : `${v.toLocaleString('zh-CN')}股`;
     const fmtMoney = (a: number) => a >= 1e8 ? `${(a / 1e8).toFixed(2)}亿`

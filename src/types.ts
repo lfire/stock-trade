@@ -130,6 +130,10 @@ export interface Manifest {
   generatedAt?: string;
   floatSharesSource?: string;
   l2?: { providers: Array<Record<string, unknown>> };
+  /** 演示形态：按 tradeDate 在内存副本上叠加 limitState（四态配色），落盘 bars 保持东财原生 */
+  demoPatterns?: Array<{ tradeDate: string; state: LimitState }>;
+  /** 逐数据集字段单位（如 bars.volume = 'share'、intraday.timestamp = 'UTC ms'） */
+  units?: Record<string, Record<string, string>>;
   files: Record<string, string>;
   [key: string]: unknown;
 }
@@ -138,14 +142,15 @@ export interface ChartDataset {
   manifest: Manifest;
   bars: Bar[];
   intraday: IntradayPoint[];
+  /** 以下均为运行时派生字段；按 modules/preset 按需装载时允许缺省 */
   intradayMulti?: IntradayPoint[];
-  chips: ChipDataset | ChipDataset[];
-  auction: AuctionPoint[];
-  trades: TradeTick[];
-  orders: Array<Record<string, unknown> & { source?: string; license?: string; requiresAuthorization?: boolean }>;
-  depth: Array<Record<string, unknown>> | Record<string, unknown>;
-  depthFull: Record<string, unknown> | null;
-  depthScenarios: Record<string, Record<string, unknown>> | null;
+  chips?: ChipDataset | ChipDataset[];
+  auction?: AuctionPoint[];
+  trades?: TradeTick[];
+  orders?: Array<Record<string, unknown> & { source?: string; license?: string; requiresAuthorization?: boolean }>;
+  depth?: Array<Record<string, unknown>> | Record<string, unknown>;
+  depthFull?: Record<string, unknown> | null;
+  depthScenarios?: Record<string, Record<string, unknown>> | null;
   [key: string]: unknown;
 }
 
@@ -232,13 +237,17 @@ export interface OrderRecord {
   level?: number;
   phase?: string;
   tag?: string;
-  trend?: string;
-  origOrdId?: string;
+  /** 运行时派生：买 1 / 卖 -1 / 撤单 0（数值，非字符串） */
+  trend?: number;
+  /** 关联原委托号；NEW 事件为 null */
+  origOrdId?: string | null;
   origVolume?: number;
   remainVolume?: number;
-  tradeId?: string;
+  /** 成交编号；仅 FILL 事件非空，其余为 null */
+  tradeId?: string | null;
   snapshot?: boolean;
-  cancelOf?: string;
+  /** 撤销的原委托号；仅 CANCEL 事件非空，其余为 null */
+  cancelOf?: string | null;
   [key: string]: unknown;
 }
 
@@ -419,7 +428,7 @@ const isPaletteKey = (key: string): key is PaletteKey => key in DEFAULT_PALETTE;
  */
 export const PALETTE: Palette = { ...DEFAULT_PALETTE };
 
-/** 内置主题预设；dark 只覆盖需要变化的键 */
+/** 内置主题预设；light / dark 均为完整 18 键色板 */
 export const THEMES: Readonly<Record<string, Readonly<Palette>>> = Object.freeze({
   light: DEFAULT_PALETTE,
   dark: Object.freeze({
@@ -430,8 +439,19 @@ export const THEMES: Readonly<Record<string, Readonly<Palette>>> = Object.freeze
     limitUp: '#FF6B6B', limitDown: '#1FAE7C',
     limitUpBroken: '#F5A94A', limitDownBroken: '#9C86EC',
     crosshair: '#7C8798', neutral: '#8A94A3', link: '#7FB0FF',
+    // 暗色专属：均价线 / 筹码盈 / 筹码亏，不再继承 light 的浅色值
+    avg: '#F0B429', chipProfit: '#F5B942', chipLoss: '#6BA6E8',
   }),
 });
+
+/** 内置主题名（顺序稳定，供主题切换 UI 与运行时守卫复用）。 */
+export const THEME_NAMES = Object.freeze(['light', 'dark'] as const);
+export type ThemeName = (typeof THEME_NAMES)[number];
+
+/** 运行时守卫：判断任意值是否为内置主题名。 */
+export function isThemeName(v: unknown): v is ThemeName {
+  return typeof v === 'string' && (THEME_NAMES as readonly string[]).includes(v);
+}
 
 export function resolveTheme(theme?: string | Record<string, string> | null): Readonly<Palette> {
   if (!theme) return DEFAULT_PALETTE;

@@ -13,6 +13,7 @@
 import type { IntradayPoint, TradeTick, Side } from '../types';
 import { r2 } from './rounding';
 import { mulberry32 } from './random';
+import { isoToDateBase } from './market-time';
 
 export interface TradeSeriesOptions {
   anchorToIntraday?: boolean;
@@ -32,7 +33,7 @@ export function buildTradeSeries(
   ): void => {
     const [hh, mm] = time.split(':');
     trades.push({
-      timestamp: Date.parse(`${iso}T${hh}:${mm}:00+08:00`),
+      timestamp: Date.parse(`${isoToDateBase(iso)}T${hh}:${mm}:00+08:00`),
       time, seq: seq++, price, volume,
       amount: amount ?? r2(price * volume),
       side, rawSide, sideSource: 'mock.public-merged', source: 'mock',

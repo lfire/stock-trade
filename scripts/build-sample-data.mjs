@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // 把 .tmp-raw/ 的公开数据归一化成稳定的示例 case；抓不到的部分按固定种子做确定性 mock。
-// 输出严格遵循 docs/01、docs/02、docs/03 定义的统一数据结构。
+// 输出严格遵循统一数据结构；日 K 逐字段对齐东方财富原生 11 列，不含注入形态。
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { matchAuction, makeOrderBook } from './auction-match.mjs';
-import { limitRateFor, limitStateOf } from './limit-rules.mjs';
+import { limitRateFor } from './limit-rules.mjs';
 import { r2, mulberry32 } from './shared.mjs';
-import { AUCTION_STEP_SEC, SESSION, AFTER_HOURS } from '../dist/core/market-constants.js';
+import { AUCTION_STEP_SEC, SESSION, LOT_SIZE } from '../dist/core/market-constants.js';
 
 const SYMBOL = '600519.SH';
 const NAME = '贵州茅台';
@@ -50,8 +50,6 @@ const has = (f) => { try { return readRaw(f).length > 0; } catch { return false;
 // 固定种子 PRNG 由 scripts/shared.mjs 提供，保证每次生成的 mock 完全一致
 const rnd = mulberry32(20261113);
 
-const notes = [];
-
 // ---------------------------------------------------------------- 1. 日 K
 function buildBars() {
   const klines = readJson('em_kline_qfq.json').data.klines;
@@ -68,56 +66,14 @@ function buildBars() {
       low: Number(l),
       close,
       preClose: r2(close - change),                 // 前复权口径下与 change 自洽
-      volume: Number(vol) * 100,                    // 手 -> 股
+      volume: Number(vol) * LOT_SIZE,               // 手 -> 股
       amount: Number(amt),                          // 元
       turnoverRate: Number(turn),                   // %
       amplitude: Number(amp),                       // %
       pctChg: Number(pct),                          // %
       change,
-      limitState: '',                               // 涨停/跌停/炸板状态，见下方注入逻辑
     };
   });
-
-  // 按比例（由代码/名称识别板块）与 0.01 元最小变动单位判定，容差固定 0.011 元
-  bars.forEach((b) => { b.limitState = limitStateOf(b, LIMIT_RATE); });
-
-  // 真实 935 根里几乎无跌停/跌停炸板，为让四种配色都可见，在中段 4 个交易日拟真注入形态。
-  // 只改这 4 根的 OHLC 与派生字段，并同步其后一根的 preClose 链条，保持数据自洽。
-  // 落在默认 viewport（最后 120 根）内，且避开末根（分时/筹码/竞价都依赖末根）
-  const samples = [
-    { idx: bars.length - 95, state: 'limitUp' },
-    { idx: bars.length - 75, state: 'limitDown' },
-    { idx: bars.length - 55, state: 'limitUpBroken' },
-    { idx: bars.length - 35, state: 'limitDownBroken' },
-  ];
-  for (const { idx, state } of samples) {
-    const b = bars[idx];
-    const pre = b.preClose;
-    const up = r2(pre * (1 + LIMIT_RATE)), down = r2(pre * (1 - LIMIT_RATE));
-    let o, h, l, c;
-    if (state === 'limitUp') { o = r2(pre * 1.012); l = r2(pre * 0.994); h = up; c = up; }
-    else if (state === 'limitDown') { o = r2(pre * 0.988); h = r2(pre * 1.006); l = down; c = down; }
-    else if (state === 'limitUpBroken') { o = r2(pre * 1.008); l = r2(pre * 0.992); h = up; c = r2(pre * 1.052); }
-    else { o = r2(pre * 0.992); h = r2(pre * 1.008); l = down; c = r2(pre * 0.948); }
-    Object.assign(b, {
-      open: o, high: h, low: l, close: c, limitState: state,
-      source: 'injected-demo',                 // 4 根注入形态与真实 K 线可区分
-      change: r2(c - pre),
-      pctChg: r2(((c - pre) / pre) * 100),
-      amplitude: r2(((h - l) / pre) * 100),
-      amount: r2((b.volume * (h + l + c)) / 3),
-    });
-    const next = bars[idx + 1];
-    if (next) {
-      next.preClose = c;
-      next.change = r2(next.close - c);
-      next.pctChg = r2(((next.close - c) / c) * 100);
-      next.amplitude = r2(((next.high - next.low) / c) * 100);
-      next.limitState = limitStateOf(next, LIMIT_RATE);
-    }
-  }
-  notes.push(`日 K：东方财富 push2his kline（fqt=1 前复权）真实数据 ${klines.length} 根，剔除 ${TRADE_DATE} 之后未完成的当日 K 线，保留 ${bars.length} 根。`);
-  notes.push(`涨跌停状态：按代码/名称识别板块确定比例（本例 600519.SH 沪市主板 ${(LIMIT_RATE * 100).toFixed(0)}%），涨跌停价 = 前复权昨收 ×(1±比例) 四舍五入到 0.01 元，容差固定 0.011 元（1 个最小变动单位），不再用 0.5% 相对容差；真实序列里涨停仅 1 根、跌停与跌停炸板为 0，故在中段 4 个交易日拟真注入 涨停 / 跌停 / 涨停炸板（触板未封住）/ 跌停炸板（触板未封死）各 1 根，仅调整这 4 根 OHLC 及其派生字段并同步下一根 preClose 链条，保证四种配色在图上均可见。`);
   return bars;
 }
 
@@ -132,25 +88,16 @@ function buildIntraday() {
     const cv = Number(cumVol), ca = Number(cumAmt);
     const hh = hhmm.slice(0, 2), mm = hhmm.slice(2);
     const t = `${hh}:${mm}`;
-    const n = Number(hhmm);
-    const session = n <= 1130 ? 'morning' : n <= 1500 ? 'afternoon' : 'afterHours';
     const p = {
-      timestamp: Date.parse(`${iso}T${t}:00+08:00`),
       time: t,
-      tradeDate: iso,                            // 多日分时按此字段分日；单日数据同样携带，保持契约一致
-      source: 'real-intraday',                  // 来源标注：腾讯历史分时真实数据
       price: Number(price),
-      avgPrice: r2(ca / (cv * 100)),               // 累计额 / (累计量(手) × 100)
-      volume: Math.max(0, cv - prevVol) * 100,     // 每分钟增量，股
-      amount: r2(Math.max(0, ca - prevAmt)),       // 每分钟增量，元
-      cumulativeVolume: cv * 100,
-      cumulativeAmount: r2(ca),
-      session,
+      volume: Math.max(0, cv - prevVol) * LOT_SIZE,  // 每分钟增量，股（手 -> 股）
+      amount: r2(Math.max(0, ca - prevAmt)),          // 每分钟增量，元
+      tradeDate: iso,                                 // 多日分时按此字段分日；单日数据同样携带，保持契约一致
     };
     prevVol = cv; prevAmt = ca;
     return p;
   });
-  notes.push(`分时：腾讯 minute/query 在 ${iso} 的真实完整交易日数据 ${points.length} 点（上午 121 + 下午 121 + 盘后 25）。腾讯返回累计量额，已差分为每分钟增量并按「累计额 ÷ (累计量 × 100)」还原均价。`);
   return { iso, points };
 }
 
@@ -166,8 +113,7 @@ function buildAuction(bars, intraday, iso) {
   const preClose = last.preClose;                 // 真实昨收 1410.27
   const firstTick = intraday[0];                  // 09:30 首点，其量额即 9:25 集合竞价成交量
   const realVolume = firstTick.volume;            // 股
-  const realAmount = firstTick.amount;            // 元
-  const realLots = realVolume / 100;              // 手（虚拟匹配量单位）
+  const realLots = realVolume / LOT_SIZE;         // 手（虚拟匹配量单位）
 
   // 同花顺等终端竞价图口径：每 9 秒一个撮合结果节点，9:15:00–9:25:00 共 69 点。
   // 每 5 分钟 = 33 个 9 秒间隔（297 秒）+ 1 个 3 秒间隔，对齐 9:20 / 9:25 整点。
@@ -235,14 +181,8 @@ function buildAuction(bars, intraday, iso) {
       matchedQty: m.matchedQty,
       unmatchedQty: m.unmatchedQty,
       unmatchedSide: m.unmatchedSide,
-      // 9:15–9:24 虚拟撮合量绝大多数平台不做历史留存，属示意数据；仅 9:25 末点锚定真实成交
-      source: isEnd ? 'anchored-real' : 'illustrative',
-      priceBasis: 'SSE-3.5.2-max-volume',
-      volume: isEnd ? realVolume : 0,                 // 竞价期间「价有量无」
-      amount: isEnd ? realAmount : 0,
     });
   });
-  notes.push('集合竞价：历史交易日的 9:15–9:25 虚拟撮合快照属 Level-2 数据，免费公开接口无法回溯（AkShare / Tushare / Baostock / 聚宽 / 米筐 / 券商 L1 在该窗口均返回空；仅当日可通过 AKShare MCP get_stock_auction_tool 或通达信协议 get_call_auction 拉取后自行归档）。因此本数据为**锚定真实值 + 按上交所《交易规则》3.5.2 三原则撮合的示意委托簿**：虚拟撮合价 / 匹配量 / 未匹配量 / 方向全部由 `matchAuction()` 按「最大成交量 → 未成交量最小 → 最接近前收」算出，不再硬编码阶梯价或随机方向；委托簿为集中在撮合价的示意簿（L2 逐笔委托无法回溯）。①真实锚点取同一交易日的昨收 1410.27、9:25 开盘价 1404.00、9:25 集合竞价成交量/额（= 分时 09:30 首点 15000 股 / 21060000 元 = 150 手），末点与真实值精确闭合；②按同花顺终端口径生成 69 个 9 秒节点（9:15:00–9:25:00，9:19:57→9:20:00 与 9:24:57→9:25:00 各 3 秒）；③拟真行为：价格只在少数节点跳变形成长水平段（9:15 虚假买单托高 → 9:19:57 集中撤单跳水 → 9:20 后不可撤单缓慢收敛 → 9:25 真实开盘价）、虚拟匹配量单调不减且后期加速、未匹配量撤单后跳降并衰减到 0、可撤单期买方堆积(红)为主后转卖方堆积(绿)；④仅 9:25 产生成交量，其余节点「价有量无」。');
   return pts;
 }
 
@@ -255,8 +195,7 @@ function buildClosingAuction(bars, intraday, iso) {
   const startPrice = p1457.price;                          // 1434.52
   const closePrice = bars[bars.length - 1].close;          // 1435.26 = p1500.price
   const realVolume = p1500.volume;                         // 177300 股
-  const realAmount = p1500.amount;                         // 254471605.07 元
-  const realLots = realVolume / 100;                       // 1773 手
+  const realLots = realVolume / LOT_SIZE;                  // 1773 手
 
   // 14:57:00–15:00:00，与开盘竞价同口径每 AUCTION_STEP_SEC 秒 1 点 → 21 点（180/9 = 20 间隔）
   const TOTAL = 180;
@@ -312,54 +251,9 @@ function buildClosingAuction(bars, intraday, iso) {
       matchedQty: m.matchedQty,
       unmatchedQty: m.unmatchedQty,
       unmatchedSide: m.unmatchedSide,
-      source: isEnd ? 'anchored-real' : 'illustrative',
-      priceBasis: 'SSE-3.5.2-max-volume',
-      volume: isEnd ? realVolume : 0,
-      amount: isEnd ? realAmount : 0,
     });
   });
-  notes.push('尾盘竞价（收盘集合竞价 14:57–15:00）：上交所 2018-08-20 起对股票实施 3 分钟收盘集合竞价，可申报不可撤单、行情揭示同开盘集合竞价。历史虚拟撮合快照同样属 L2 无法回溯，故与开盘竞价一致采用**锚定真实 + 三原则撮合的示意委托簿**（并列价参考最近成交价 14:57 末价）：①真实锚点取 14:57 连续竞价末价 1434.52、15:00 收盘价 1435.26（= 日 K close）、15:00 集合竞价成交量 177300 股 / 254471605.07 元 = 1773 手，末点精确闭合；②按同花顺终端口径生成 21 个 9 秒节点（14:57:00–15:00:00）；③真实分时里 14:58/14:59 成交量为 0（价有量无），仅 15:00 统一撮合有量；④不可撤单期虚拟匹配量单调不减、未匹配量逐步被吸收到 0、买方堆积(红)为主。');
   return pts;
-}
-
-// ---------------------------------------------------------------- 5. 逐笔明细（mock + 真实结构）
-function buildTrades(intraday, iso) {
-  const trades = [];
-  let seq = 0;
-  const push = (time, price, volume, side, rawSide, phase, tradeCount) => {
-    const [hh, mm] = time.split(':');
-    trades.push({
-      timestamp: Date.parse(`${iso}T${hh}:${mm}:00+08:00`),
-      time, seq: seq++, price, volume, amount: r2(price * volume),
-      side, rawSide, sideSource: 'mock.public-merged', source: 'mock',
-      // 真实逐笔明细属交易所 Level-2 增值行情，需展示/非展示许可，不得自行再分发
-      license: 'public-demo', requiresAuthorization: true,
-      granularity: 'merged3s', phase, tradeCount,
-    });
-  };
-  push('09:25:00', intraday[0].price, 15000, 'N', 'N', 'auction', 1);   // 集合竞价无主动方向
-  let prev = intraday[0].price;
-  const regular = intraday.filter((p) => p.session !== 'afterHours');
-  for (const p of regular) {
-    const n = 1 + Math.floor(rnd() * 3);              // 每分钟 1–3 条合并分笔
-    const minuteVol = Math.max(100, p.volume);
-    let left = minuteVol;
-    for (let i = 0; i < n; i += 1) {
-      const v = i === n - 1 ? left : Math.max(100, Math.round((minuteVol / n) * (0.6 + rnd() * 0.8) / 100) * 100);
-      left = Math.max(0, left - v);
-      const price = r2(p.price + (rnd() - 0.5) * 0.8);
-      const delta = price - prev;
-      const side = delta > 0.01 ? 'B' : delta < -0.01 ? 'S' : 'N';
-      const rawSide = side === 'N' ? 'M' : side;      // 腾讯用 M 表示中性
-      push(p.time, price, v, side, rawSide, 'continuous', 1 + Math.floor(rnd() * 5));
-      prev = price;
-    }
-  }
-  for (const p of intraday.filter((x) => x.session === 'afterHours')) {
-    push(p.time, p.price, Math.max(100, p.volume), 'N', 'M', 'afterHours', 1);
-  }
-  notes.push(`逐笔明细：真实公开接口只给 3 秒合并分笔且为当日片段（东财 details 200 条 / 腾讯 detail 70 条，已保存在 src/data/raw/ 供对照）。为保证示例 case 完整稳定，主数据按相同的字段结构确定性 mock 全天 ${trades.length} 条，B/S/N 由价格变动推导、rawSide 用 B/S/M，granularity=merged3s。`);
-  return trades;
 }
 
 // ---------------------------------------------------------------- 6. 十档盘口（mock）
@@ -367,19 +261,13 @@ function buildDepth(bars, iso) {
   const close = bars[bars.length - 1].close;
   const mk = (sign) => Array.from({ length: 10 }, (_, i) => ({
     price: r2(close + sign * (i + 1) * 0.01),
-    volume: (Math.round(2 + rnd() * 40) * 100),
-    orderCount: 1 + Math.floor(rnd() * 18),
+    volume: (Math.round(2 + rnd() * 40) * LOT_SIZE),
   }));
   const snap = {
     timestamp: Date.parse(`${iso}T15:00:00+08:00`),
     bids: mk(-1),
     asks: mk(1),
-    phaseCode: 'E',
-    source: 'mock',
-    // 真实十档盘口属交易所 Level-2 增值行情，需持牌授权
-    license: 'public-demo', requiresAuthorization: true,
   };
-  notes.push('十档盘口：公开盘口接口空响应，按收盘价上下各 10 档、0.01 步长确定性 mock；保留 bids/asks/orderCount/phaseCode 结构。');
   return [snap];
 }
 
@@ -390,7 +278,6 @@ const tradeDates = bars.slice(-5).map((b) => b.tradeDate);
 const preCloseByDate = Object.fromEntries(bars.slice(-5).map((b) => [b.tradeDate, b.preClose]));
 const auction = buildAuction(bars, intraday, iso);
 const closingAuction = buildClosingAuction(bars, intraday, iso);
-const trades = buildTrades(intraday, iso);
 const depth = buildDepth(bars, iso);
 const last = bars[bars.length - 1];
 // 流通股本取自人工归档的证券资料（含来源与 asOf），不再写死在生成脚本里
@@ -403,14 +290,19 @@ const generatedAt = process.env.SOURCE_DATE_EPOCH
   ? new Date(Number(process.env.SOURCE_DATE_EPOCH) * 1000).toISOString()
   : new Date().toISOString();
 
+// 逐数据集单位显式声明（与市面口径对齐：lot=手、share=股、percent=百分数数值）
+const units = {
+  bars: { price: 'CNY', volume: 'share', amount: 'CNY', turnoverRate: 'percent', pctChg: 'percent', amplitude: 'percent', change: 'CNY', timestamp: 'UTC ms' },
+  intraday: { price: 'CNY', volume: 'share', amount: 'CNY', timestamp: 'UTC ms' },
+  auction: { virtualPrice: 'CNY', matchedQty: 'lot', unmatchedQty: 'lot', timestamp: 'UTC ms' },
+  depth: { price: 'CNY', volume: 'share', timestamp: 'UTC ms' },
+  orders: { price: 'CNY', volume: 'share' },
+};
+
 const manifest = {
   symbol: '600519.SH',
   name: '贵州茅台',
-  market: 'CN',
-  timezone: 'Asia/Shanghai',
-  currency: 'CNY',
   adjust: 'qfq',
-  interval: '1d',
   tradeDate: iso,
   tradeDates,                     // 多日分时的交易日列表（最后一项为当日）
   preCloseByDate,                 // 各交易日昨收，多日分时按首日昨收统一价格轴
@@ -418,38 +310,29 @@ const manifest = {
   open: last.open,
   close: last.close,
   floatShares: instrument.floatShares,
-  floatSharesSource: `${instrument.source}（asOf ${instrument.asOf}）`,
   limitRate: LIMIT_RATE,          // 按代码/名称识别板块：主板 10% / 创业科创 20% / ST 主板 5% / 北交所 30%
   session: SESSION.map((s) => ({ ...s })),
-  afterHours: { ...AFTER_HOURS },
-  palette: 'light',
-  upColor: '#E24B4A',
-  downColor: '#1D9E75',
-  l2: {
-    providers: [{ kind: 'public-merged', granularity: 'merged3s', license: 'public-demo', label: '公开合并分笔（示例）' }],
-  },
+  demoPatterns: [
+    { tradeDate: '2026-06-26', state: 'limitUp' },
+    { tradeDate: '2026-07-24', state: 'limitDown' },
+    { tradeDate: '2026-08-21', state: 'limitUpBroken' },
+    { tradeDate: '2026-09-18', state: 'limitDownBroken' },
+  ],
   files: {
     bars: 'bars_1d.json',
     intraday: `intraday_${iso.replace(/-/g, '')}.json`,
     auction: `auction_${iso.replace(/-/g, '')}.json`,
-    trades: `trades_${iso.replace(/-/g, '')}.json`,
     depth: `depth_${iso.replace(/-/g, '')}.json`,
+    orders: `orders_${iso.replace(/-/g, '')}.json`,
   },
-  units: { price: 'CNY', volume: 'share', amount: 'CNY', timestamp: 'UTC ms' },
-  source: 'public + deterministic mock (see SOURCES.md)',
-  /**
-   * 数据可获得性 / 授权边界摘要（截至 2026-11 的沪深交易规则与行情授权口径）：
-   * 交易所法定公开的是日频行情表与集合竞价即时行情（参考价/匹配量/未匹配量）；
-   * 分钟级分时是信息商加工产品，十档/逐笔/逐笔委托属 Level-2 增值行情需授权；
-   * 筹码分布不是交易所数据，是软件估算模型。9:15–9:24 虚拟撮合量绝大多数平台不留存历史。
-   */
   provenance: {
-    bars: { availability: 'public-eod', source: 'real-kline + injected-demo', licensed: false },
+    bars: { availability: 'public-eod', source: 'real-kline', licensed: false },
     intraday: { availability: 'vendor-minute', source: 'real-intraday', licensed: false },
     auction: { availability: 'l1-intraday-only', source: 'illustrative + anchored-real endpoints', licensed: false },
-    trades: { availability: 'level2-licensed', source: 'mock', licensed: true },
     depth: { availability: 'level2-licensed', source: 'mock', licensed: true },
+    orders: { availability: 'level2-licensed', source: 'mock', licensed: true },
   },
+  units,
   generatedAt,
 };
 
@@ -462,7 +345,6 @@ out('manifest.json', manifest);
 out('bars_1d.json', bars);
 out(`intraday_${suffix}.json`, intraday);
 out(`auction_${suffix}.json`, [...auction, ...closingAuction]);   // phase: open(69) + close(21)
-out(`trades_${suffix}.json`, trades);
 out(`depth_${suffix}.json`, depth);
 
 const existsInRaw = (f) => {
@@ -477,30 +359,38 @@ const failed = ['em_depth.json'].filter((f) => !existsInRaw(f));
 const sourcesMd = [
   '# 示例数据来源说明',
   '',
-  `固定交易日：\`${iso}\`（完整历史交易日，避免当日进行中数据导致 case 不稳定）。`,
+  `固定交易日：${iso}（完整历史交易日，避免当日进行中数据导致 case 不稳定）。`,
   '',
   '## 真实公开数据（已尝试并成功采集）',
   '',
-  ...notes.filter((n) => !n.includes('多次空响应') && !n.includes('空响应') && !n.includes('只给 3 秒') && !n.includes('未返回')),
+  `日 K：东方财富 push2his kline（fqt=1 前复权）真实数据 936 根，剔除 ${TRADE_DATE} 之后未完成的当日 K 线，保留 ${bars.length} 根。日 K 字段严格取自东财原生 11 列（日期/开/收/高/低/量(手)/额(元)/振幅%/涨跌幅%/涨跌额/换手率%）：仅做「量(手) × LOT_SIZE 转股、timestamp 由 tradeDate 生成」两项映射，不含任何注入形态、不含 limitState / source 标记。四种涨跌停/炸板配色改由 manifest.demoPatterns 声明，由 \`deriveDataset()\` 运行时在内存按此叠加 \`limitState\`，落盘 bars 保持东财原生。`,
+  `分时：腾讯 minute/query 在 ${iso} 的真实完整交易日数据 ${intraday.length} 点（上午 121 + 下午 121 + 盘后 25）。腾讯返回累计量额，已差分为每分钟增量；落盘仅保留 time / price / volume / amount / tradeDate，avgPrice / cumulativeVolume / cumulativeAmount / session / timestamp / source 由 src/core/derive-dataset.ts 运行时重算或补齐。`,
+  '集合竞价：历史 9 秒级虚拟撮合过程快照需 L2 授权、无法回溯；9:25 结果与参考价属公开即时行情，故 manifest 标为 l1-intraday-only。本数据为锚定真实值 + 按上交所《交易规则》3.5.2 三原则撮合的示意委托簿，虚拟撮合价 / 匹配量 / 未匹配量 / 方向全部由 matchAuction() 按「最大成交量 → 未成交量最小 → 最接近前收」算出。落盘仅保留 time / phase / virtualPrice / matchedQty / unmatchedQty / unmatchedSide / timestamp；source / priceBasis / volume / amount 不再落盘，末点量额由运行时从 intraday 锚定，phase 为 chart-context 强依赖故保留。',
+  '尾盘竞价（收盘集合竞价 14:57–15:00）：上交所 2018-08-20 起对股票实施 3 分钟收盘集合竞价，可申报不可撤单；与开盘竞价一致采用锚定真实 + 三原则撮合的示意委托簿（并列价参考 14:57 末价），按同花顺口径生成 21 个 9 秒节点。',
   '',
   '## 采集失败 / 不足，已按合理规则确定性 mock',
   '',
-  ...notes.filter((n) => n.includes('多次空响应') || n.includes('空响应') || n.includes('只给 3 秒') || n.includes('未返回')),
-  '',
-  `- 十档盘口接口 \`em_depth.json\` 采集结果：${failed.length ? '空响应' : '有响应但未采用'}；筹码分布不依赖公开接口，由真实日 K 在运行时派生（见下）。`,
-  '- 所有 mock 使用固定种子 `mulberry32(20261113)`，重复运行 `build-sample-data.mjs` 输出完全一致；`build-order-book.mjs` 用独立种子 `mulberry32(2026111302)`。',
-  '- 原始数据回退链：`.tmp-raw/hist_intraday.json`（规范名）→ `.tmp-raw/tx_minute.json`（旧名备份）→ `src/data/raw/` 归档副本。`npm run fetch` 一次抓取会同时写规范名与旧名；腾讯分时接口常返回空，归档副本保证 `npm run data` 在离线/无抓取结果时仍可完整重跑。',
+  '十档盘口：公开盘口接口空响应，按收盘价上下各 10 档、0.01 步长确定性 mock；落盘每档仅 price / volume，顶层仅 timestamp / bids / asks，phaseCode / source / license / requiresAuthorization / orderCount 不再落盘（orderCount 运行时由 orders 聚合）。',
+  `- 十档盘口接口 em_depth.json 采集结果：${failed.length ? '空响应' : '有响应但未采用'}；筹码分布不依赖公开接口，由真实日 K 在运行时派生（见下）。`,
+  '- 落盘 mock 使用固定种子 `mulberry32(20261113)`，重复运行 `build-sample-data.mjs` 输出完全一致；`build-order-book.mjs` 用独立种子 `mulberry32(2026111302)`；运行时派生层远档挂单用 `mulberry32(2026111303)`。',
+  '- 原始数据回退链：`.tmp-raw/hist_intraday.json`（规范名）→ `.tmp-raw/tx_minute.json`（旧名备份）→ `src/data/raw/` 归档副本。腾讯分时接口常返回空，归档副本保证 `npm run data` 在离线/无抓取结果时仍可完整重跑。',
   '',
   '## 运行时派生数据集（非落盘输入）',
   '',
-  '以下 4 个数据集**由 src/algorithms 在运行时派生**，不再写盘为独立 JSON、也不再是输入：',
+  '以下 5 个数据集由 src/algorithms 在运行时派生，不再写盘为独立 JSON、也不再是输入：',
   '',
   '- `chips` ← `src/algorithms/chip-distribution.ts`（真实日 K + 换手率的成本分布估算模型）；',
   '- `intradayMulti` ← `src/algorithms/intraday-multi.ts`（末日真实分时 + 前 4 日按当日日 K 拟真，量额锚定日 K）；',
   '- `depthFull` ← `src/algorithms/order-book.ts`（由 `orders` 委托流回放聚合，前十档与 `depth` 快照闭合）；',
-  '- `depthScenarios` ← `src/algorithms/depth-scenarios.ts`（普通 / 涨停 / 跌停场景）。',
+  '- `depthScenarios` ← `src/algorithms/depth-scenarios.ts`（普通 / 涨停 / 跌停场景）；',
+  '- `trades`（逐笔明细）← `buildTradeSeries(intraday)` 运行时生成、不落盘；原落盘输入 `trades_20261113.json` 已删除，不再写盘；合并分笔委托号关联 `ordIds` 同步移除。',
   '',
-  '派生入口为 `src/core/derive-dataset.ts`，以 L0 输入（bars / intraday / manifest 与 auction / trades / depth / orders 四份 Level-2 示意数据）调用上述纯函数。因此 `manifest.files` 与 `manifest.provenance` 只登记 6 个落盘输入：`bars / intraday / auction / trades / depth / orders`。',
+  '派生过程的两个跨图修正（均由 `src/core/derive-dataset.ts` 在运行时完成）：',
+  '',
+  '- **委托流守恒修复**：对 `orders` 补发 `CANCEL`，保证 `ΣNEW = ΣFILL + ΣCANCEL + Σ存活`，使委托流严格闭合。`orders` 落盘已移除 `snapshot` 布尔字段，「收盘存活挂单」由运行时按 `origOrdId` 与委托流守恒重建。',
+  '- **15:00 累计额锚定 bars**：把 15:00 累计成交额锚定当日日 K `amount`，使分时累计额与日 K 严格闭合。',
+  '',
+  '派生入口为 `src/core/derive-dataset.ts`，以 L0 输入（`bars` / `intraday` / `manifest`，以及 `auction`（`l1-intraday-only` 示意）与 `depth` / `orders`（2 份 Level-2 示意数据））调用上述纯函数；明确需授权的是 `depth` / `orders` 这 2 个。因此 `manifest.files` 与 `manifest.provenance` 只登记 5 个落盘输入：`bars / intraday / auction / depth / orders`。',
   '',
   '## 原始数据留档',
   '',
@@ -508,16 +398,25 @@ const sourcesMd = [
   '',
   '## 单位与口径',
   '',
-  '- 价格：元；成交量：**股**（东财返回「手」，已 ×100）；成交额：元。',
-  '- 时间戳：UTC 毫秒；`tradeDate` / `time` 保留市场本地字符串，避免 `new Date()` 串日。',
+  '- 价格：元（CNY）；成交量：股（share，东财返回「手」，已 × LOT_SIZE(=100) 转股）；成交额：元（CNY）。`lot` = 手、`share` = 股、`percent` = 百分数数值（如 0.33 表示 0.33%）。',
+  '- 时间戳：UTC 毫秒（UTC ms）；日线 `timestamp` 取交易日 00:00 UTC；`tradeDate` / `time` 保留市场本地字符串，避免 `new Date()` 串日。',
   '- 复权：前复权（qfq）；`preClose = close - change`，与前复权涨跌额自洽。',
-  '- 分时均价：`累计成交额 / (累计成交量(手) × 100)`，不是价格算术平均。',
-  '- 集合竞价期间成交量为 0，仅 9:25 统一撮合有量；集合竞价成交方向为 `N`（无主动方向）。',
+  '- `turnoverRate` / `pctChg` / `amplitude` 为百分数数值（% 数值，如 0.33 表示 0.33%）；`change` 单位为元（CNY）。',
+  '- 开盘/尾盘竞价 `matchedQty` / `unmatchedQty` 单位为手（lot）；`virtualPrice` 单位为元（CNY）。',
+  '- `depth.bids/asks[].volume` 单位为股（share）：市面十档盘口常显示「手」，二者差 100 倍，由 `LOT_SIZE` 换算（1 手 = 100 股）；每档 `orderCount` 由运行时从 `orders` 聚合。',
+  '- 分时均价：均价 = 累计成交额 ÷ 累计成交量（股），不是价格算术平均；竞价/分时累计量额、session、timestamp 等派生字段由 `src/core/derive-dataset.ts` 运行时补齐。',
+  '- 开盘/尾盘竞价节点除 9:25 / 15:00 两个统一撮合时点外成交量均为 0；集合竞价成交方向为 `N`（无主动方向）。',
   '',
   '> 本文为工程示例数据说明，不构成投资建议；示例标的仅用于验证数据结构与组件渲染。',
+  '',
+  '## 派生数据集与 Level-2 授权边界',
+  '',
+  '- `orders`（逐笔委托 NEW/FILL/CANCEL）由 `build-order-book.mjs` 以固定种子 `mulberry32(2026111302)` 确定性生成并落盘，仅 7 字段 `ordId/time/price/volume/side/action/origOrdId`；`level/phase/snapshot/origVolume/remainVolume/tradeId/cancelOf/tag/trend` 等仅为生成期内存状态、不写进 JSON；「收盘存活挂单」语义由运行时按 `origOrdId` 与委托流守恒重建。`depth` / `orders` 为 2 份 Level-2 示意数据（需授权），`auction` 为 `l1-intraday-only` 示意，统一登记在 `manifest.files` / `manifest.provenance`（5 个落盘输入）。',
+  '- **数据可获得性**：按《证券交易所管理办法》第 38 条与沪深交易规则 5.1.3，交易所法定公开的是日频行情表与集合竞价即时行情（参考价/匹配量/未匹配量）；十档盘口、逐笔明细、逐笔委托属 Level-2 增值行情，真实数据需向上证所信息网络 / 深圳证券信息申请展示或非展示许可，且不得自行复制、转发或开发衍生品。本项目示例数据均为确定性 mock、非真实行情，不再落盘 `license` / `requiresAuthorization` 等授权元数据。',
+  '- 逐数据集来源与授权摘要统一登记在 `manifest.provenance`（5 个落盘输入，其中 `depth` / `orders` 2 个需授权），供消费者一次读取；逐数据集单位见 `manifest.units`。',
   '',
 ].join('\n');
 writeFileSync(path.join(dataDir, 'SOURCES.md'), sourcesMd);
 
-console.log(`\n日 K ${bars.length} 根 | 分时 ${intraday.length} 点 | 开盘竞价 ${auction.length} 点 + 尾盘竞价 ${closingAuction.length} 点 | 逐笔 ${trades.length} 条 | 盘口 ${depth.length} 快照`);
-console.log('数据生成完成（chips / intradayMulti / depthFull / depthScenarios 由 src/algorithms 运行时派生，不再落盘）。');
+console.log(`\n日 K ${bars.length} 根 | 分时 ${intraday.length} 点 | 开盘竞价 ${auction.length} 点 + 尾盘竞价 ${closingAuction.length} 点 | 盘口 ${depth.length} 快照`);
+console.log('数据生成完成（chips / intradayMulti / depthFull / depthScenarios / trades 由 src/algorithms 运行时派生，不再落盘）。');

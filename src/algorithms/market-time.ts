@@ -1,7 +1,9 @@
 /**
- * 交易时间口径（算法单元化收口），公式逐字来自 src/core/bar-aggregator.ts 与
- * src/compute/indicators.ts；交易时段常量统一取自 ../core/market-constants。
- * 注意：elapsedMarketMinutes 当前口径 09:30=1、11:30=120、13:00=120，先保留不改。
+ * 交易时间口径（算法单元化收口）：clockMinutes / elapsedMarketMinutes /
+ * intradayBucket / isoWeek / isoToDateBase 的唯一实现，交易时段常量统一取自
+ * ../core/market-constants；compute / core 层与组件层均复用本模块导出。
+ * 口径说明：elapsedMarketMinutes 采用「首分钟计 1」——09:30 与 09:31 均为 1，
+ * 11:30=120、13:00=120（午休按上午已收盘计）、15:00=240，全天 240 分钟不变。
  */
 import {
   AM_START, AM_END, PM_START, SESSION_MINUTES,
@@ -41,4 +43,16 @@ export function isoWeek(dateStr: string): string {
   const start = Date.UTC(year, 0, 1);
   const week = Math.ceil(((d.getTime() - start) / 86400000 + 1) / 7);
   return `${year}-W${String(week).padStart(2, '0')}`;
+}
+
+/**
+ * 把交易日字符串规范成可安全拼进 Date.parse 的 ISO 日期基准。
+ * manifest.tradeDate 去掉横杠后是 '20261113' 这样的 8 位紧凑格式，
+ * 直接拼 '20261113T09:30:00+08:00' 会被 Date.parse 判为 NaN；
+ * 这里转成 '2026-11-13'。已是 'YYYY-MM-DD' 的写法原样返回。
+ */
+export function isoToDateBase(iso: string): string {
+  return /^\d{8}$/.test(iso)
+    ? `${iso.slice(0, 4)}-${iso.slice(4, 6)}-${iso.slice(6, 8)}`
+    : iso;
 }

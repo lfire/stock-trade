@@ -5,6 +5,7 @@ import { rgba, rect, line, dashedH, polyline, makeScale } from '../gl/geometry';
 import { PALETTE, AXIS_GUTTER_L } from '../types';
 import { adaptiveMAPeriods } from '../core/indicator-params';
 import { intradayVolumeRatioSeries } from '../compute/indicators';
+import { pickUnit } from '../algorithms/format';
 import type { ChartContext } from '../core/chart-context';
 import type { Bar, IntradayPoint, OverlayTextItem } from '../types';
 
@@ -22,29 +23,6 @@ interface IndicatorResult {
 interface AxisState {
   lo: number; hi: number; name: string; top: number; bottom: number; pad: number;
   unit?: { d: number; u: string; dec: number };
-}
-
-const UNIT_STEPS = [
-  { d: 1, u: '' },
-  { d: 1e3, u: '千' },
-  { d: 1e4, u: '万' },
-  { d: 1e8, u: '亿' },
-];
-
-/**
- * 参考终端：按纵轴上限尽量选大单位（千 / 万 / 亿），单位沉底，刻度只显示缩放后的纯数值。
- * 数值过长时进一步减少小数位：整数 ≥4 位用 0 位、≥3 位用 1 位，其余 2 位（与终端一致）。
- */
-function pickUnit(hi: number, name: string) {
-  if (name !== 'VOL' && name !== 'AMOUNT') return { d: 1, u: '', dec: 2 };
-  let pick = UNIT_STEPS[0];
-  for (const c of UNIT_STEPS) {
-    // 阈值放宽到 0.2：数值过长时尽量升级单位（如 9979万 → 1.00亿），而不是留一长串整数
-    if (hi / c.d >= 0.2) pick = c; else break;
-  }
-  const hiScaled = hi / pick.d;
-  const dec = hiScaled >= 1000 ? 0 : hiScaled >= 100 ? 1 : 2;
-  return { d: pick.d, u: pick.u || (name === 'VOL' ? '股' : '元'), dec };
 }
 
 export class IndicatorPane extends PaneElement {

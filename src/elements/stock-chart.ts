@@ -3,10 +3,11 @@
 import { ChartContext, SUBPLOT_INDICATORS } from '../core/chart-context';
 export { SUBPLOT_INDICATORS };
 import { loadDataset } from '../core/data-store';
-import { PALETTE, LAYOUT, resolveTheme } from '../types';
+import { PALETTE, LAYOUT } from '../types';
+import { WORKSPACE_CSS_VARS, WORKSPACE_SIZE_VARS, resolveWorkspaceTheme } from '../workspace/theme';
 import type {
   ChartDataset, ChartMode, ChipMode, DepthUnit, MACDParams, MAConfig, Viewport,
-  SideRect, NumericInput, DetailData, Palette, PaneElementLike, DepthBookSnapshot,
+  SideRect, NumericInput, DetailData, Palette, PaletteKey, PaneElementLike, DepthBookSnapshot,
   SubplotLayout, SubplotConfig, ChartContextFacade, StockChartEventMap,
 } from '../types';
 import { chipSnapshotAt } from './chip-pane';
@@ -35,11 +36,11 @@ const IND_LABEL: Record<string, string> = { VOL: '成交量', AMOUNT: '成交额
 // 副图信息栏样式随组件自带，脱离示例页也能正确渲染（选择器限定在 #pane-bars 内）
 const PANE_BARS_CSS = `
 #pane-bars{position:absolute;inset:0;pointer-events:none;z-index:5}
-#pane-bars .pane-bar{position:absolute;display:flex;align-items:center;gap:10px;padding:0 10px;box-sizing:border-box;background:var(--sc-panel,#FAFBFC);box-shadow:inset 0 1px 0 var(--sc-line,#E3E6EB);font:11px/16px system-ui,-apple-system,"PingFang SC",sans-serif;color:var(--sc-muted,#6B7280);white-space:nowrap;overflow:hidden;pointer-events:auto}
-#pane-bars .pane-bar select{-webkit-appearance:none;appearance:none;box-sizing:border-box;height:var(--sc-row-h,18px);margin:0;padding:0 18px 0 6px;font:500 11px/16px system-ui,-apple-system,"PingFang SC",sans-serif;color:var(--sc-text,#1F2329);background-color:transparent;background-image:linear-gradient(45deg,transparent 50%,var(--sc-muted,#8A93A0) 50%),linear-gradient(135deg,var(--sc-muted,#8A93A0) 50%,transparent 50%);background-position:calc(100% - 11px) 7px,calc(100% - 7px) 7px;background-size:4px 4px,4px 4px;background-repeat:no-repeat;border:0;border-radius:3px;min-width:72px;cursor:pointer;outline:none}
-#pane-bars .pane-bar select:disabled{color:var(--sc-muted,#6B7280);cursor:default;background-color:var(--sc-panel,#F2F4F7)}
-#pane-bars .pane-bar .vals{color:var(--sc-muted,#6B7280);line-height:16px;overflow:hidden;text-overflow:ellipsis}
-#pane-bars .pane-bar .vals b{font-weight:500;color:var(--sc-text,#1F2329)}
+#pane-bars .pane-bar{position:absolute;display:flex;align-items:center;gap:10px;padding:0 10px;box-sizing:border-box;background:var(--sw-panel,#FAFBFC);box-shadow:inset 0 1px 0 var(--sw-line,#E3E6EB);font:11px/16px system-ui,-apple-system,"PingFang SC",sans-serif;color:var(--sw-muted,#6B7280);white-space:nowrap;overflow:hidden;pointer-events:auto}
+#pane-bars .pane-bar select{-webkit-appearance:none;appearance:none;box-sizing:border-box;height:var(--sw-row-h,18px);margin:0;padding:0 18px 0 6px;font:500 11px/16px system-ui,-apple-system,"PingFang SC",sans-serif;color:var(--sw-text,#1F2329);background-color:transparent;background-image:linear-gradient(45deg,transparent 50%,var(--sw-muted,#8A93A0) 50%),linear-gradient(135deg,var(--sw-muted,#8A93A0) 50%,transparent 50%);background-position:calc(100% - 11px) 7px,calc(100% - 7px) 7px;background-size:4px 4px,4px 4px;background-repeat:no-repeat;border:0;border-radius:3px;min-width:72px;cursor:pointer;outline:none}
+#pane-bars .pane-bar select:disabled{color:var(--sw-muted,#6B7280);cursor:default;background-color:var(--sw-panel,#F2F4F7)}
+#pane-bars .pane-bar .vals{color:var(--sw-muted,#6B7280);line-height:16px;overflow:hidden;text-overflow:ellipsis}
+#pane-bars .pane-bar .vals b{font-weight:500;color:var(--sw-text,#1F2329)}
 `;
 
 /**
@@ -105,7 +106,7 @@ export class StockChart extends HTMLElement {
     this.detailData = null;
     this.scenarioPano = null;
     this.paneBars = null;
-    this.theme = null;           // 当前主题名：'light' | 'dark' | 'custom' | 'dataset'
+    this.theme = null;           // 当前主题名：'light' | 'dark' | 'custom'
   }
 
   connectedCallback() {
@@ -127,10 +128,10 @@ export class StockChart extends HTMLElement {
     // 右侧 DOM 侧栏：内含页面提供的 <depth-book> 与挂载进来的明细卡片，重连时复用不销毁
     if (!this.sideSlot) {
       const sideSlot = document.createElement('div');
-      sideSlot.style.cssText = 'position:absolute;z-index:3;background:var(--sc-bg,#fff);border-left:1px solid var(--sc-line,#E3E6EB);box-shadow:-2px 0 10px rgba(31,35,41,.05);overflow:hidden;box-sizing:border-box;display:none;flex-direction:column';
+      sideSlot.style.cssText = 'position:absolute;z-index:3;background:var(--sw-bg,#fff);border-left:1px solid var(--sw-line,#E3E6EB);box-shadow:-2px 0 10px rgba(31,35,41,.05);overflow:hidden;box-sizing:border-box;display:none;flex-direction:column';
       this.appendChild(sideSlot);
       const statsEl = document.createElement('div');
-      statsEl.style.cssText = 'height:100%;overflow:auto;padding:6px 8px;box-sizing:border-box;font:11px/1.6 system-ui,-apple-system,sans-serif;color:var(--sc-text,#1F2329)';
+      statsEl.style.cssText = 'height:100%;overflow:auto;padding:6px 8px;box-sizing:border-box;font:11px/1.6 system-ui,-apple-system,sans-serif;color:var(--sw-text,#1F2329)';
       sideSlot.appendChild(statsEl);
       // 分时模式右列下半部：交易明细，由页面把卡片挂进来
       const tradeHost = document.createElement('div');
@@ -215,7 +216,6 @@ export class StockChart extends HTMLElement {
 
     // 初始模式已在上方 configure() 中一并设置，不调用 setMode（数据尚未加载时它会读 dataset）
     this.ctx!.emit('compute-mode-change', { mode: this.ctx!.compute.mode, threads: 1, reason: 'js-fallback' });
-    // 声明式主题优先；未声明时等 setDataset() 读取数据集 manifest 的配色声明
     const declaredTheme = this.getAttribute('theme');
     if (declaredTheme) this.setTheme(declaredTheme);
     // 声明式 MACD 参数，如 macd="12,26,9"；未声明保持固定默认 (12,26,9)
@@ -275,7 +275,7 @@ export class StockChart extends HTMLElement {
   }
 
   showError(msg: string) {
-    if (this.overlay) this.overlay.innerHTML = `<div style="padding:12px;color:var(--sc-up,${PALETTE.up});font:13px system-ui">${msg}</div>`;
+    if (this.overlay) this.overlay.innerHTML = `<div style="padding:12px;color:var(--sw-up,currentColor);font:13px system-ui">${msg}</div>`;
     emitEvent(this, CHART_EVENTS.CHART_ERROR, { message: msg });
   }
 
@@ -288,8 +288,8 @@ export class StockChart extends HTMLElement {
   depthFlex() {
     if (!this.sideExpanded) return '0 0 auto';
     // compact 只显示卖1/买1：用当前下发的两条 bar 高度 + 分界线精确计算，避免裁切或留白
-    const bar = parseFloat(this.style.getPropertyValue('--sc-bar-h')) || LAYOUT.barH;
-    const split = parseFloat(this.style.getPropertyValue('--sc-split-h')) || LAYOUT.splitH;
+    const bar = parseFloat(this.style.getPropertyValue('--sw-bar-h')) || LAYOUT.barH;
+    const split = parseFloat(this.style.getPropertyValue('--sw-split-h')) || LAYOUT.splitH;
     return `0 0 ${2 * bar + 2 * LAYOUT.rowH + split}px`;
   }
   tradeFlex() {
@@ -319,8 +319,8 @@ export class StockChart extends HTMLElement {
     const rem = R - rows * LAYOUT.rowH;           // 0 ~ rowH-1
     const each = Math.floor(rem / 4);             // 均分给 4 条标题/表头行
     const left = rem - 4 * each;                  // 除不尽的余数给买1/卖1 间隙
-    this.style.setProperty('--sc-bar-h', `${LAYOUT.barH + each}px`);
-    this.style.setProperty('--sc-split-h', `${LAYOUT.splitH + left}px`);
+    this.style.setProperty('--sw-bar-h', `${LAYOUT.barH + each}px`);
+    this.style.setProperty('--sw-split-h', `${LAYOUT.splitH + left}px`);
     if (this.sideExpanded) this.depthEl.style.flex = this.depthFlex();
   }
 
@@ -371,22 +371,22 @@ export class StockChart extends HTMLElement {
     const num = 'font-variant-numeric:tabular-nums';
     const row = (k: string, v: unknown, strong?: boolean) =>
       `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:2px 0">`
-      + `<span style="color:var(--sc-muted,#6B7280);font-size:11px">${k}</span>`
+      + `<span style="color:var(--sw-muted,#6B7280);font-size:11px">${k}</span>`
       + `<b style="font-weight:${strong ? 500 : 400};font-size:${strong ? 13 : 11}px;text-align:right;${num}">${v}</b></div>`;
     const group = (title: string, lo: unknown, hi: unknown, conc: unknown) =>
-      `<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--sc-line,#EEF0F3)">`
-      + `<div style="font-size:10px;color:var(--sc-muted,#9AA3AF);letter-spacing:.3px;margin-bottom:2px">${title}</div>`
+      `<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--sw-line,#EEF0F3)">`
+      + `<div style="font-size:10px;color:var(--sw-muted,#9AA3AF);letter-spacing:.3px;margin-bottom:2px">${title}</div>`
       + row('区间', `${lo}–${hi}`) + row('集中度(面板口径)', conc) + `</div>`;
     const pct = c.profitRatio * 100;
-    const head = `<div style="background:var(--sc-panel,#FAFBFC);border-bottom:1px solid var(--sc-line,#ECEEF1);padding:5px 8px;margin:-6px -8px 8px;display:flex;align-items:center;justify-content:space-between;gap:8px">`
-      + `<b style="font:500 12px/1.4 system-ui,-apple-system,sans-serif;color:var(--sc-text,#1F2329)">筹码统计</b>`
-      + `<span style="font:10px/1.4 system-ui,-apple-system,sans-serif;color:var(--sc-muted,#6B7280);${num}">${c.date}</span></div>`;
+    const head = `<div style="background:var(--sw-panel,#FAFBFC);border-bottom:1px solid var(--sw-line,#ECEEF1);padding:5px 8px;margin:-6px -8px 8px;display:flex;align-items:center;justify-content:space-between;gap:8px">`
+      + `<b style="font:500 12px/1.4 system-ui,-apple-system,sans-serif;color:var(--sw-text,#1F2329)">筹码统计</b>`
+      + `<span style="font:10px/1.4 system-ui,-apple-system,sans-serif;color:var(--sw-muted,#6B7280);${num}">${c.date}</span></div>`;
     const main = `<div style="margin-bottom:8px">`
       + `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">`
-      + `<span style="color:var(--sc-muted,#6B7280);font-size:11px">获利比例</span>`
-      + `<b style="font:500 18px/1.2 system-ui,-apple-system,sans-serif;color:var(--sc-up,#E24B4A);${num}">${pct.toFixed(2)}%</b></div>`
-      + `<div style="height:6px;border-radius:3px;background:var(--sc-line,#ECEEF1);overflow:hidden;margin-top:6px">`
-      + `<div style="width:${Math.max(0, Math.min(100, pct))}%;height:100%;background:var(--sc-up,#E24B4A)"></div></div></div>`;
+      + `<span style="color:var(--sw-muted,#6B7280);font-size:11px">获利比例</span>`
+      + `<b style="font:500 18px/1.2 system-ui,-apple-system,sans-serif;color:var(--sw-up,#E24B4A);${num}">${pct.toFixed(2)}%</b></div>`
+      + `<div style="height:6px;border-radius:3px;background:var(--sw-line,#ECEEF1);overflow:hidden;margin-top:6px">`
+      + `<div style="width:${Math.max(0, Math.min(100, pct))}%;height:100%;background:var(--sw-up,#E24B4A)"></div></div></div>`;
     // 软件面板口径：「平均成本」= COST(50)（分布中位/中心），加权平均成本另列
     this.statsEl.innerHTML = head + main + row('平均成本', c.avgCost.toFixed(2), true)
       + row('加权均成本', c.weightedAvgCost != null ? c.weightedAvgCost.toFixed(2) : '—')
@@ -452,23 +452,22 @@ export class StockChart extends HTMLElement {
 
   // ---- 公共 API ----
   /** 主题：预设名（light / dark）、自定义色板对象，或 null 恢复默认 */
-  setTheme(theme: string | Record<string, string> | null, { fromDataset = false } = {}) {
-    const resolved = resolveTheme(theme);
-    this.theme = fromDataset ? 'dataset'
-      : (typeof theme === 'string' ? (theme || 'light') : 'custom');
+  setTheme(theme: string | Record<string, string> | null) {
+    // 与 workspace 主题共用同一归一口径：自定义对象经 createPalette 过滤非法键/非字符串值，
+    // 保证 WebGL 实例色板与 --sw-* CSS 变量同源；light/dark/null 仍是完整 18 键色板。
+    const resolved = resolveWorkspaceTheme(theme);
+    this.theme = typeof theme === 'string' ? (theme || 'light') : 'custom';
     // 实例级色板：不再就地覆盖全局 PALETTE，渲染帧内由 withPalette 临时生效
-    const palette = { ...resolved };
+    const palette = { ...resolved.palette };
     if (this.ctx) this.ctx.setPalette(palette);
     // CSS 变量只写到本实例 host（含 shadow DOM 的后代可继承），不再污染 :root / 其它实例
-    const vars = {
-      '--sc-bg': palette.background, '--sc-panel': palette.panel, '--sc-line': palette.grid,
-      '--sc-text': palette.text, '--sc-muted': palette.textMuted,
-      '--sc-up': palette.up, '--sc-down': palette.down, '--sc-link': palette.link,
-      '--sc-row-h': `${LAYOUT.rowH}px`, '--sc-head-h': `${LAYOUT.headH}px`,
-      '--sc-title-h': `${LAYOUT.titleH}px`,
-      // 4 条标题/表头行与买卖间隙的基准值；syncSideBars() 会按侧栏余数覆盖
-      '--sc-bar-h': `${LAYOUT.barH}px`, '--sc-split-h': `${LAYOUT.splitH}px`,
-    };
+    // 18 色由统一映射表生成（与 workspace 主题严格一致），避免手写遗漏或串名；
+    // 5 个尺寸取 LAYOUT 基准，--sw-bar-h / --sw-split-h 会被 syncSideBars() 按侧栏余数覆盖。
+    const vars: Record<string, string> = {};
+    for (const key of Object.keys(WORKSPACE_CSS_VARS) as PaletteKey[]) {
+      vars[WORKSPACE_CSS_VARS[key]] = palette[key];
+    }
+    for (const [name, value] of Object.entries(WORKSPACE_SIZE_VARS)) vars[name] = value;
     for (const [k, v] of Object.entries(vars)) this.style.setProperty(k, v);
     // vars 里的 bar 基准值会覆盖 syncSideBars 的实际分配，必须立刻重算，
     // 否则运行时切主题后 4 条标题/表头行被打回 24px，明细视口出现半行/留白。
@@ -631,21 +630,26 @@ export class StockChart extends HTMLElement {
   }
 
   setDataset(dataset: Partial<ChartDataset>) {
-    // 归一化：支持只注入部分分片（如 setDataset({ bars })），缺失字段给安全空值
+    // 归一化：支持只注入部分分片（如 setDataset({ bars })），缺失字段给安全空值。
+    // 逐字段 nullish 兜底（不用 {...默认值, ...dataset} 展开）：deriveDataset 按需派生时
+    // 会给未启用字段返回「显式 undefined」键，展开会把安全默认值反噬成 undefined，
+    // 下游 setDetailData / setDepthScenario / renderChipStats 随之读到 undefined。
+    const d: Partial<ChartDataset> = dataset || {};
     const ds = {
-      manifest: {}, bars: [], intraday: [], intradayMulti: [], chips: [], auction: [], trades: [],
-      depth: [], orders: [], depthFull: null, depthScenarios: {},
-      ...(dataset || {}),
+      ...d,
+      manifest: d.manifest ?? {},
+      bars: d.bars ?? [],
+      intraday: d.intraday ?? [],
+      intradayMulti: d.intradayMulti ?? [],
+      chips: d.chips ?? [],
+      auction: d.auction ?? [],
+      trades: d.trades ?? [],
+      depth: d.depth ?? [],
+      orders: d.orders ?? [],
+      depthFull: d.depthFull ?? null,
+      depthScenarios: d.depthScenarios ?? {},
     } as ChartDataset;
     this.ctx!.setDataset(ds);
-    // 数据集声明的 palette / upColor / downColor 在用户未显式指定主题时生效
-    if (!this.theme || this.theme === 'dataset') {
-      const mf = ds.manifest || {};
-      const patch = { ...resolveTheme(mf.palette as string | Record<string, string> | null) };
-      if (mf.upColor) patch.up = mf.upColor as string;
-      if (mf.downColor) patch.down = mf.downColor as string;
-      this.setTheme(patch, { fromDataset: true });
-    }
     this.setDetailData({
       trades: ds.trades, orders: ds.orders, depth: ds.depth as Record<string, unknown>,
       depthFull: ds.depthFull || null, depthScenarios: ds.depthScenarios || null,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>股票图表组件 · 全量架构与数据契约审计（2026-11-19）</title>
+<title>股票图表组件 · 全量架构与数据契约审计（2026-11-19，后续增补至 2026-11-20）</title>
 <style>
   :root{--bg:#f7f8fa;--card:#fff;--ink:#1f2329;--muted:#6b7280;--line:#e3e6eb;--up:#e24b4a;--down:#1d9e75;--warn:#b0741a;--blue:#1b5fbf}
   *{box-sizing:border-box}
@@ -39,29 +39,42 @@
 <body>
 <div class="wrap">
   <h1>股票图表组件 · 全量架构与数据契约审计</h1>
-  <div class="sub">审计日期 2026-11-19 ｜ 范围：模块出入参 / 类型契约 / 数据可获得性与授权边界 / 模块化规范 ｜ 标的：600519.SH 示例数据（截至 2026-11-13）</div>
+  <div class="sub">审计日期 2026-11-19（后续增补至 2026-11-20）｜ 范围：模块出入参 / 类型契约 / 数据可获得性与授权边界 / 模块化规范 ｜ 标的：600519.SH 示例数据（截至 2026-11-13）</div>
+
+  <div class="card" style="border-left:5px solid var(--down);background:#f0faf5">
+    <strong><span class="tag t-ok">当前状态</span> 说明卡（截至 2026-11-21）</strong>
+    <ul style="margin-bottom:0">
+      <li>概念与术语以 <code>docs/00-概念总览与术语词典.md</code> 为准。 另：2026-11-21 后续主题已完全收进组件（统一 <code>--sw-*</code> 18 色 + 5 尺寸写入 <code>&lt;stock-workspace&gt;</code> 根、light/dark 两套完整），页面壳改用自有 <code>--page-*</code>（定义在组件代码 <code>src/workspace/shell-css.ts</code>、随包发布），<code>index.html</code> 0 个 <code>&lt;style&gt;</code> / 0 处变量定义 / 0 处 <code>var(--page-*)</code> 引用；工具栏 <code>#btn-theme</code> 可点击切换，<code>theme-change</code> 保留为纯通知。 另：2026-11-20 后续已重建跨框架适配层（内核 <code>createWorkspaceController</code> + React/Vue/Svelte/Angular/Solid·Preact/原生六类桥，零框架运行时依赖），测试 97/97。 另：2026-11-20 后续已新增根组件 <code>&lt;stock-workspace&gt;</code>，页面 DOM/CSS/逻辑收进组件，数据改由 <code>data</code>/<code>config</code> 属性注入（<code>dataset</code> 路径属性废弃），公开标签 9 个（含 <code>stock-workspace</code> / <code>detail-canvas</code>）。 <strong>模块化阶段二已落地</strong>：12 模块 / 4 预设（full/intraday/candle/minimal），<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据，<code>registerModule</code> 为扩展点，<code>?modules=</code> / <code>?preset=</code> 已在示例页生效。本文第一~十节为按日期分节的历史审计记录，各节数字与结论为该轮当时值，当前状态以本节与文末「处置结论」为准；各节括注中的「当时 6 键 / 3 个 licensed / 507 / 1377 / 4 根注入」等均为本轮输入层清理前（上一轮增补时点）的当时状态，历史分节数字不动。</li>
+      <li><span class="tag t-ok">已落地</span> 66 个 <code>.ts</code> 实现模块 + <code>global.d.ts</code>，0 显式 any；声明由 tsc 自动生成（唯一手写 <code>src/global.d.ts</code>）；源码 import 无扩展名、<code>build.mjs</code> 编译后补 <code>.js</code>；<code>dist</code> 66 JS + 67 声明。</li>
+      <li>数据：<code>manifest.files/provenance</code> 收敛为 <strong>5 键</strong>；<code>src/data/</code> 仅 <strong>5 个落盘 JSON</strong>（bars 935 / intraday 267 / auction 90 / depth 1 快照 / orders 1315）+ manifest + SOURCES + raw；chips / intradayMulti / depthFull / depthScenarios / trades <strong>5 个数据集</strong>由 <code>src/core/derive-dataset.ts</code> 运行时派生、不落盘（逐笔 <code>buildTradeSeries(intraday)</code> 生成 495 条）；仅 <code>depth</code> / <code>orders</code> <strong>2 个</strong> <code>licensed:true</code>，auction 为 <code>l1-intraday-only</code>。</li>
+      <li>跨图闭合全部修复（分时 15:00 累计额 = 日 K amount、逐笔按分钟 242/242 与分时相等、委托守恒、多日前 4 日累计量额锚定 bars、撮合补 0.01 步长中间价、<code>r2</code> half-up）；<code>verify.mjs</code> 含 6 条数值闭合断言，<code>docs/00</code> §3.3 列 8 条跨图关联。</li>
+      <li>算法按概念收口 <code>src/algorithms/</code> 18 模块 + <code>ALGORITHMS</code>；架构 <code>src/architecture/</code> 6 文件；两个 Container、<code>MODULE_REGISTRY</code> 11 项（渲染元数据，装载依据为 <code>MODULE_CATALOG</code>）、<code>TERMINOLOGY</code> 8 条、9 个公开标签（含 <code>stock-workspace</code> / <code>detail-canvas</code>）；<code>pane</code> 六义已按 <code>docs/00</code> §7 消解为 Module / Region.rect；<code>ChartContext.applyLayout()</code> 委托 <code>MainCanvasLayout.compute()</code>；计算引擎当前为 <code>JsComputeEngine</code>（<code>WasmComputeEngine</code> 未构建占位）。</li>
+      <li>当前验收：<code>check</code> 通过 / <code>test</code> 97/97 / <code>typecheck</code> 0 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 第三方 TS Bundler·NodeNext·TSX 均 0 错误 / 4 个 preset CDP 场景 0 JS 错误。</li>
+      <li><span class="tag t-ok">本轮·输入层精简</span> 2026-11-20 后续完成输入层清理：<code>manifest.files/provenance</code> 收敛为 5 键（<code>bars/intraday/auction/depth/orders</code>），<code>trades_20261113.json</code> 删除、逐笔由 <code>buildTradeSeries(intraday)</code> 运行时生成 495 条；需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个；<code>bars_1d.json</code> 恢复东财 push2his 原生 11 列映射（13 字段、无 <code>limitState</code>/<code>source</code>），四种演示形态改由 <code>manifest.demoPatterns</code>（4 项 <code>tradeDate+state</code>）记录、<code>deriveDataset()</code> 内存叠加 <code>limitState</code>，落盘不再注入改写 OHLC；落盘字段精简为 <code>intraday</code> 5 / <code>auction</code> 7 / <code>depth</code> 顶层 3 + 每档 2 / <code>orders</code> 7 / <code>bars</code> 13，累计量额/均价/<code>orderCount</code>/<code>limitState</code>/<code>tag</code>/<code>trend</code> 由运行时补齐、对外 <code>ChartDataset</code> 语义不变；<code>manifest.units</code> 5 组登记单位口径（<code>volume</code> 股、竞价匹配量手、十档股、% 数值，手股换算统一 <code>LOT_SIZE</code>），删除 11 个零消费者字段；<code>verify.mjs</code> 6 条指标基准经独立脚本重算（MACD 柱末 −1.927041、KDJ K末 51.533313 / D末 63.206664，另 3 条未变）。清理后验收 <code>check</code> 通过 / <code>test</code> 97/97 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持。</li>
+    </ul>
+  </div>
 
   <div class="card tldr">
-    <p><b>结论：架构分层健康（零循环依赖、compute 纯函数、core 不反向依赖 DOM），但契约层与数据边界原先不够规范；本轮已落地四组规范化修复，剩余大项需你确认后再重构。</b></p>
+    <p><b>结论：架构分层健康（零循环依赖、compute 纯函数、core 不反向依赖 DOM），但契约层与数据边界原先不够规范；本轮已落地四组规范化修复，剩余大项需你确认后再重构（当时结论；该大项已于 §7–§10 分四轮落地）。</b></p>
     <ul>
       <li><strong>出入参契约</strong>：修正 14 处 <code>.d.ts</code> 与实现不符、删除 3 个幽灵属性、补齐 <code>period</code> / <code>chip-mode</code> 属性与 React 的 <code>macd</code> / <code>intradayDays</code> 映射；补参数防御与只读返回值。</li>
-      <li><strong>数据可获得性</strong>：核实交易所法定公开范围与 Level-2 授权边界，为 10 个数据集建立 <code>manifest.provenance</code> 摘要，数据体补 <code>source</code> / <code>license</code> / <code>requiresAuthorization</code>，UI 增加示意与拟真提示。</li>
+      <li><strong>数据可获得性</strong>：核实交易所法定公开范围与 Level-2 授权边界，为 10 个数据集建立 <code>manifest.provenance</code> 摘要（当时 10；当时 6 键），数据体补 <code>source</code> / <code>license</code> / <code>requiresAuthorization</code>，UI 增加示意与拟真提示。</li>
       <li><strong>模块化</strong>：新增 <code>src/core/market-constants.ts</code> 作为 A 股业务常量单一真源，消除时段 / 0.01 / ×100 / 240 分钟的多份拷贝；涨跌停 0.9/1.1 硬编码改为按 <code>manifest.limitRate</code> 计算。</li>
       <li><strong>工程一致性</strong>：<code>npm run data</code> 补齐两步生成链、<code>typecheck</code> 纳入 <code>react.d.ts</code>、<code>data-store</code> 缺失分片按注释真正跳过。</li>
     </ul>
   </div>
 
   <div class="kpis">
-    <div class="kpi"><b class="green">63/63</b><span>npm test 全部通过（7 个运行时契约 + 7 个 P0 + 11 个 P1/P2 架构回归）</span></div>
+    <div class="kpi"><b class="green">64/64</b><span>npm test 全部通过（当时 63/63；当时 64/64；7 个运行时契约 + 7 个 P0 + 11 个 P1/P2 架构回归）</span></div>
     <div class="kpi"><b class="green">0</b><span>循环依赖 / JS 控制台错误（6 张截图）</span></div>
-    <div class="kpi"><b>10</b><span>数据集全部登记 provenance</span></div>
-    <div class="kpi"><b class="green">0</b><span>审计问题剩余待办（8 组全部完成，见第 6 节）</span></div>
+    <div class="kpi"><b>6</b><span>数据集全部登记 provenance（当时 10；当时 6 键，4 个中间集运行时派生）</span></div>
+    <div class="kpi"><b class="green">0</b><span>审计问题剩余待办（8 组全部完成，见第 6 节；其后 §7–§10 四轮另已落地）</span></div>
   </div>
-  <div class="src">数据来源：项目源码逐文件盘点（初版 36 个 JS/MJS；2026-11-19 起为 24 个 TS 模块 + 17 个 MJS 脚本）、<code>src/data/*.json</code> 只读解析、<code>scripts/verify.mjs</code> 与 8 组测试；外部口径按金融检索路由核实，检索时点 2026-11-19。</div>
+  <div class="src">数据来源：项目源码逐文件盘点（初版 36 个 JS/MJS；2026-11-19 为 24 TS + 17 MJS；<strong>当时 51 个 TS 实现模块 + 1 手写声明、9 个 MJS、9 组测试共 64 项</strong>）、<code>src/data/*.json</code> 只读解析、<code>scripts/verify.mjs</code> 与 8 组测试；外部口径按金融检索路由核实，检索时点 2026-11-19。</div>
 
   <h2>一、外部口径：五类数据的可获得性与授权边界</h2>
   <table>
-    <thead><tr><th>数据类别</th><th>是否交易所法定即时行情</th><th>公开可获得性</th><th>授权要求</th><th>项目现状</th></tr></thead>
+    <thead><tr><th>数据类别</th><th>是否交易所法定即时行情</th><th>公开可获得性</th><th>授权要求</th><th>项目现状（当时）</th></tr></thead>
     <tbody>
       <tr><td>日频行情（日 K）</td><td>日报表属法定公开</td><td>高，日终信息免费</td><td>再分发需许可</td><td><span class="tag t-ok">真实</span> 东财前复权 935 根 + 4 根注入形态</td></tr>
       <tr><td>分时历史（分钟线）</td><td>部分（快照累加，属信息商加工）</td><td>中，保留长度有限</td><td>延时转发需 Category_7 许可</td><td><span class="tag t-warn">部分</span> 当日真实；多日前 4 日按日 K 拟真</td></tr>
@@ -81,38 +94,38 @@
       <tr><td>幽灵 / 缺失属性</td><td><code>symbol</code> 被观察但无行为、JSX 有 <code>height</code>；<code>period</code> / <code>chipMode</code> 有方法无属性；React 未映射 <code>macd</code> / <code>intraday-days</code></td><td>移除无行为属性，补 <code>period</code> / <code>chip-mode</code> 属性与初始化，React 补 2 个 setter 及 <code>react.d.ts</code> 字段</td><td><span class="tag t-ok">已修</span></td></tr>
       <tr><td>返回值泄漏内部状态</td><td><code>setMA</code> 返回内部数组、事件 detail 传引用；<code>rgba</code> 返回共享可变缓存数组</td><td><code>setMA</code> 与事件都给拷贝；<code>rgba</code> 冻结缓存值并对非法色值兜底（不污染缓存）</td><td><span class="tag t-ok">已修</span></td></tr>
       <tr><td>参数未校验</td><td><code>sma/kdj/volumeRatio</code> 的 n≤0 / NaN 产生全 NaN；<code>setViewport</code> 可写入越界或 start&gt;end</td><td>纯函数补前置防御；<code>setViewport</code> 钳制到序列范围并补 <code>mode</code></td><td><span class="tag t-ok">已修</span></td></tr>
-      <tr><td>事件 options / detail</td><td><code>tape-scroll</code> 不冒泡（与声明注释矛盾）；<code>view-panorama</code> 未传 detail；同一事件多源/多 options</td><td>前两项已修；<code>chart-error</code> / <code>depth-unit-change</code> 多源与 options 统一列为待办</td><td><span class="tag t-warn">部分</span></td></tr>
+      <tr><td>事件 options / detail</td><td><code>tape-scroll</code> 不冒泡（与声明注释矛盾）；<code>view-panorama</code> 未传 detail；同一事件多源/多 options</td><td>前两项已修；<code>chart-error</code> / <code>depth-unit-change</code> 多源与 options 统一列为待办（当时待办；现状经 <code>src/events.ts</code> 统一 <code>emitEvent</code> 已修复）</td><td><span class="tag t-ok">已修（§6 完成）</span></td></tr>
       <tr><td>数据缺失防御</td><td><code>data-store.js</code> 注释称「缺失分片自动跳过」，实际任一 404 会让整个加载失败</td><td>补 try/catch + <code>console.warn</code> 真正跳过；manifest 缺失仍为致命错误</td><td><span class="tag t-ok">已修</span></td></tr>
       <tr><td>校验方式</td><td>原有 <code>contract.test.mjs</code> / <code>verify.mjs</code> 多为源码字符串断言，不校验运行时行为</td><td>新增 <code>contract-runtime.test.mjs</code>（7 个测试）：常量真源、色值只读、参数防御、provenance、数据体标注、SOURCES 覆盖</td><td><span class="tag t-ok">已补</span></td></tr>
     </tbody>
   </table>
 
-  <h2>三、数据可获得性矩阵（10 个数据集）</h2>
+  <h2>三、数据可获得性矩阵（10 个数据集）（当时 10；当时 6 落盘输入 + 4 运行时派生）</h2>
   <table>
     <thead><tr><th>数据集</th><th>真实性</th><th>可获得性</th><th>L2 授权</th><th>本轮新增标注</th></tr></thead>
     <tbody>
-      <tr><td>bars</td><td>真实日 K + 4 根注入</td><td>public-eod</td><td>否</td><td>注入样本 <code>source: 'injected-demo'</code></td></tr>
+      <tr><td>bars</td><td>真实日 K + 4 根注入（当时）</td><td>public-eod</td><td>否</td><td>注入样本 <code>source: 'injected-demo'</code>（当时）</td></tr>
       <tr><td>intraday</td><td>真实分时 267 点</td><td>vendor-minute</td><td>否</td><td>每点 <code>source: 'real-intraday'</code></td></tr>
-      <tr><td>intradayMulti</td><td>末日真实 + 前 4 日拟真</td><td>partly-unavailable</td><td>否</td><td>前 4 日 <code>source: 'simulated-from-daily-ohlc'</code>；UI「前 N 日为拟真数据」</td></tr>
-      <tr><td>chips</td><td>软件估算模型</td><td>estimated-model</td><td>否</td><td><code>source/estimated</code> + 契约补齐 shape/peakSource/decay/concentrationBasis</td></tr>
+      <tr><td>intradayMulti</td><td>末日真实 + 前 4 日拟真</td><td>partly-unavailable</td><td>否</td><td>前 4 日 <code>source: 'simulated-from-daily-ohlc'</code>；UI「前 N 日为拟真数据」 <span class="tag t-warn">运行时派生·已不落盘</span></td></tr>
+      <tr><td>chips</td><td>软件估算模型</td><td>estimated-model</td><td>否</td><td><code>source/estimated</code> + 契约补齐 shape/peakSource/decay/concentrationBasis <span class="tag t-warn">运行时派生·已不落盘</span></td></tr>
       <tr><td>auction</td><td>示意撮合 + 末点锚定真实</td><td>l1-intraday-only</td><td>否</td><td>68 个示意点 <code>source: 'illustrative'</code> + <code>priceBasis</code>；浮层「示意撮合 · 虚拟量历史不留存」</td></tr>
       <tr><td>trades</td><td>mock</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>source/license/requiresAuthorization</code></td></tr>
       <tr><td>depth</td><td>mock</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>license/requiresAuthorization</code></td></tr>
       <tr><td>orders</td><td>mock 委托流</td><td>level2-licensed</td><td><strong>是</strong></td><td>经 <code>manifest.provenance</code> 与 SOURCES.md 标注</td></tr>
-      <tr><td>depthFull</td><td>由 mock 委托流回放</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>source/license/requiresAuthorization</code></td></tr>
-      <tr><td>depthScenarios</td><td>mock 场景</td><td>level2-licensed</td><td><strong>是</strong></td><td>内层 pano 继承标注，顶层经 provenance 登记</td></tr>
+      <tr><td>depthFull</td><td>由 mock 委托流回放</td><td>level2-licensed</td><td><strong>是</strong></td><td><code>source/license/requiresAuthorization</code> <span class="tag t-warn">运行时派生·已不落盘</span></td></tr>
+      <tr><td>depthScenarios</td><td>mock 场景</td><td>level2-licensed</td><td><strong>是</strong></td><td>内层 pano 继承标注，顶层经 provenance 登记 <span class="tag t-warn">运行时派生·已不落盘</span></td></tr>
     </tbody>
   </table>
-  <p class="src"><code>manifest.provenance</code> 覆盖 <code>manifest.files</code> 全部 10 个键，含 <code>availability / source / licensed</code>；<code>SOURCES.md</code> 追加「派生数据集与 Level-2 授权边界」节，补齐 orders/depthFull/depthScenarios 三节及第二个固定种子 <code>mulberry32(2026111302)</code>。</p>
+  <p class="src"><code>manifest.provenance</code> 覆盖 <code>manifest.files</code> 全部 10 个键（当时 10 键；当时 6 键），含 <code>availability / source / licensed</code>；<code>SOURCES.md</code> 追加「派生数据集与 Level-2 授权边界」节，补齐 orders/depthFull/depthScenarios 三节及第二个固定种子 <code>mulberry32(2026111302)</code>。（当时表内 5 个 Level-2 授权 / level2-licensed；当时仅 trades / depth / orders 3 个 <code>licensed:true</code>，auction 为 <code>l1-intraday-only</code>）</p>
 
   <h2>四、模块化规范</h2>
   <div class="card">
     <ul>
-      <li><strong>依赖方向</strong>：<code>types.ts</code>（叶子）← <code>gl</code> / <code>compute</code> / <code>core</code> ← <code>elements</code> ← <code>index.js</code>，零循环依赖；<code>core</code> 不 <code>querySelector</code> DOM，<code>compute/indicators.js</code> 保持纯函数（本轮仅依赖零依赖的常量叶子）。</li>
+      <li><strong>依赖方向</strong>：<code>types.ts</code>（叶子）← <code>gl</code> / <code>compute</code> / <code>core</code> ← <code>elements</code> ← <code>index.js</code>，零循环依赖；<code>core</code> 不 <code>querySelector</code> DOM，<code>compute/indicators.js</code> 保持纯函数（本轮仅依赖零依赖的常量叶子）（当时目录结构；当时 51 个 TS 模块，算法收口 <code>src/algorithms/</code>、空间契约收口 <code>src/architecture/</code>）。</li>
       <li><strong>单一真源</strong>：新增 <code>src/core/market-constants.ts</code>，导出 <code>PRICE_TICK / PRICE_EPS / LOT_SIZE / AM_START…PM_END / SESSION_MINUTES / DAY_MINUTES / HALF_HOUR_MARKS / AUCTION_*</code>；<code>indicators.ts</code>、<code>bar-aggregator.ts</code>、<code>limit-rules.mjs</code>、<code>chart-context.ts</code> 改为引用，并经 <code>./pure</code> 导出。</li>
       <li><strong>涨跌停比例</strong>：委托流与校验不再硬编码 <code>0.9/1.1</code>，改 <code>limitPrices(preClose, manifest.limitRate)</code>，换创业板/科创板数据时边界与校验同步跟随。</li>
       <li><strong>工程链</strong>：<code>npm run data</code> 改为「生成主数据 + 生成委托簿」两步（此前单跑会丢 manifest 的 3 个派生键导致 check 失败）；<code>typecheck</code> 纳入 <code>frameworks/react.d.ts</code>。</li>
-      <li><strong>重复实现收敛</strong>：<code>r2</code> 4 份、<code>split(':')</code> 6 份、<code>PRICE_EPS</code> 2 份中的后两项已收口；剩余 <code>r2</code> / <code>mulberry32</code> / 竞价时段常量仍分散，列入待办。</li>
+      <li><strong>重复实现收敛</strong>：<code>r2</code> 4 份、<code>split(':')</code> 6 份、<code>PRICE_EPS</code> 2 份中的后两项已收口；剩余 <code>r2</code> / <code>mulberry32</code> / 竞价时段常量仍分散、列入待办（当时待办；现状已收口到 <code>src/algorithms/</code> 的 rounding/random/market-time，脚本侧薄 re-export <code>dist/algorithms</code>）。</li>
     </ul>
   </div>
 
@@ -120,19 +133,20 @@
   <table>
     <thead><tr><th>项目</th><th>结果</th></tr></thead>
     <tbody>
-      <tr><td><code>npm run check</code></td><td>24 个 TS 模块（由 tsc strict 校验）+ 41 个 JS/MJS 产物语法检查 + 数据契约 + 预置期望值断言，全部通过</td></tr>
-      <tr><td><code>npm test</code></td><td><strong>63/63</strong>（7 个运行时契约 + 7 个 P0 受控状态 + 11 个 P1/P2 架构回归）</td></tr>
+      <tr><td><code>npm run check</code></td><td>24 个 TS 模块（由 tsc strict 校验）+ 41 个 JS/MJS 产物语法检查 + 数据契约 + 预置期望值断言，全部通过（当时 24 个 TS + 41 个 JS/MJS；当时 51 + 51）</td></tr>
+      <tr><td><code>npm test</code></td><td><strong>63/63</strong>（当时；当时 <strong>64/64</strong>；7 个运行时契约 + 7 个 P0 受控状态 + 11 个 P1/P2 架构回归）</td></tr>
       <tr><td>P1/P2 浏览器探针</td><td>点击盘口单位按钮：<code>depth-unit-change</code> 只派发 <strong>1 次</strong>、<code>request</code> 1 次、页面下拉 volume → amount 同步、<code>chart-error</code> 0；门面仍冻结、序列 242 点，0 JS 错误</td></tr>
       <tr><td>P1/P2 截图回归</td><td>8 场景 0 JS 错误；前 5 张文件大小与改动前一致（像素级无视觉回归），含盘口单位 amount、涨停场景、全景放大视图</td></tr>
       <tr><td>P0 浏览器探针</td><td>门面 <code>Object.isFrozen=true</code>、写入抛 <code>TypeError</code>、内部方法 0 暴露、getter 浅拷贝不被反向污染；<code>setViewport/setTheme/setDepthScenario/setIntradayDays</code> 实测生效（242 → 726 → 242），0 JS 错误</td></tr>
       <tr><td>P0 截图回归</td><td>6 场景文件大小与改动前一致（像素级无视觉回归），价格轴 / 竞价列 / 副图 / 盘口 / 明细全部正常</td></tr>
-      <tr><td><code>npm run typecheck</code> / <code>build</code></td><td>通过；build 25 个文件，pack 29 文件 / 100.0 kB</td></tr>
+      <tr><td><code>npm run typecheck</code> / <code>build</code></td><td>通过；build 25 个文件，pack 29 文件 / 100.0 kB（当时；当时 build 51 JS + 52 声明，pack 107 文件）</td></tr>
       <tr><td>截图回归（6 场景）</td><td>0 JS 错误；竞价浮层示意说明、多日「前 2 日为拟真数据」、竞价禁用态、日界标签均正常</td></tr>
-      <tr><td>数据重生成</td><td><code>npm run data</code> 两步链产出 10 个数据集，<code>provenance</code> 完整、SOURCES.md 覆盖派生集</td></tr>
+      <tr><td>数据重生成</td><td><code>npm run data</code> 两步链产出 10 个数据集，<code>provenance</code> 完整、SOURCES.md 覆盖派生集（当时 10 个数据集；当时产出 6 个落盘输入 + 4 个运行时派生）</td></tr>
     </tbody>
   </table>
 
   <h2>六、审计问题处置台账（全部完成）</h2>
+  <p class="src">本节为 2026-11-19 审计当时的处置台账，表内 507 / 1377 / 53-33 等均为当时落盘数；输入层精简后的当前值见开头「当前状态说明卡」。</p>
   <table>
     <thead><tr><th>优先级</th><th>事项</th><th>原因 / 风险</th></tr></thead>
     <tbody>
@@ -141,12 +155,13 @@
       <tr><td><span class="tag t-ok">P1 已完成</span></td><td>数据重跑不可完全复现：生成脚本读 <code>hist_intraday.json</code>，抓取脚本只产出 <code>tx_minute.json</code></td><td>统一规范名：<code>npm run fetch</code> 一次抓取同时写 <code>hist_intraday.json</code> + 别名 <code>tx_minute.json</code>；生成脚本建立「规范名 → 兼容名 → <code>src/data/raw</code> 归档副本」三级回退并校验分钟点非空，离线也能完整重跑；<code>SOURCES.md</code> 记录回退链；<code>npm run data</code> 已含两步生成链</td></tr>
       <tr><td><span class="tag t-ok">P1 已完成</span></td><td>事件契约漂移：<code>chart-error</code> 两处 options 不同、<code>depth-unit-change</code> 双派发源、<code>webglcontext-*</code> options 不对称；事件名未集中登记</td><td>新建 <code>src/events.ts</code>：<code>CHART_EVENTS</code> 冻结常量表 + <code>emitEvent()</code>（统一 bubbles/composed）。全仓 <code>new CustomEvent</code> 收敛到该文件一处；盘口单位改为 <code>depth-unit-request</code> → 根容器唯一派发 <code>depth-unit-change</code>，浏览器探针实测点击一次只派发一次；<code>chart-error</code> / <code>webglcontext-*</code> options 统一；<code>index.d.ts</code> 补 request 事件</td></tr>
       <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>exports</code> 未暴露 <code>dist/core/*</code> / <code>dist/gl/*</code>；<code>./elements/*</code> 有 <code>.js.js</code> 陷阱；无 <code>./vue</code></td><td>补齐 <code>./vue</code> / <code>./events</code> / <code>./core/*</code> / <code>./gl/*</code> / <code>./compute/*</code> / <code>./frameworks/*</code>；通配符目标改为 <code>./dist/elements/*</code> 消除拼接陷阱；新增无运行时依赖的 <code>vStockChart</code> 指令与类型；<code>typecheck</code> 纳入全部 <code>.d.ts</code>；<code>pretest</code> 保证 build 顺序</td></tr>
-      <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>r2</code> 4 份、<code>mulberry32</code> 2 份、竞价时段常量 6 份；<code>manifest.session</code> 无代码读取；UI 硬编码「前复权」</td><td>新建 <code>scripts/shared.mjs</code>（<code>r2/r6/mulberry32</code>）供 4 个脚本共用；<code>market-constants.js</code> 补 <code>AUCTION_STEP_SEC</code> / <code>TIME</code> / <code>SESSION</code>，委托流时段字面量与 manifest.session 均改为引用；<code>getSeries()</code> 收盘时刻读 <code>manifest.session</code>（缺省回退 15:00）；主图复权标签读 <code>manifest.adjust</code>。数值序列与旧实现等价，委托流 1377 条 / 全景 53-33 档不变</td></tr>
+      <tr><td><span class="tag t-ok">P1 已完成</span></td><td><code>r2</code> 4 份、<code>mulberry32</code> 2 份、竞价时段常量 6 份；<code>manifest.session</code> 无代码读取；UI 硬编码「前复权」</td><td>新建 <code>scripts/shared.mjs</code>（<code>r2/r6/mulberry32</code>）供 4 个脚本共用；<code>market-constants.ts</code> 补 <code>AUCTION_STEP_SEC</code> / <code>TIME</code> / <code>SESSION</code>，委托流时段字面量与 manifest.session 均改为引用；<code>getSeries()</code> 收盘时刻读 <code>manifest.session</code>（缺省回退 15:00）；主图复权标签读 <code>manifest.adjust</code>。数值序列与旧实现等价，委托流 1377 条（审计当时；1377 为落盘 L0，运行时派生后 1773 条）/ 全景 53-33 档不变</td></tr>
       <tr><td><span class="tag t-ok">P2 已完成</span></td><td>文档数字漂移；<code>generatedAt</code> 与 <code>floatShares</code> 硬编码</td><td>README 数字修正为 507 / 1377 / 53-33 并消除 0.5% 容差矛盾；<code>generatedAt</code> 改当前 UTC 时间并支持 <code>SOURCE_DATE_EPOCH</code> 可复现构建；<code>floatShares</code> 改读 <code>src/data/raw/instrument.json</code>（含来源与 asOf），manifest 增加 <code>floatSharesSource</code></td></tr>
       <tr><td><span class="tag t-ok">P2 已完成</span></td><td>废弃 <code>adaptiveMACDParams</code> / <code>CLEAR</code>；<code>setMA</code> 与 <code>setMovingAverages</code> 两套命名；<code>PALETTE</code> 全局可变单例</td><td>删除两个废弃导出（测试改用 <code>resolveMACDParams</code>）；均线写入统一为 <code>ChartContext.setMovingAverages()</code>，组件层无 <code>setMA</code> 残留；新增纯函数 <code>createPalette()</code> 并给 <code>applyPalette/resetPalette</code> 标 <code>@deprecated</code>（保留 <code>withPalette</code> 的帧级机制，不改渲染行为）</td></tr>
     </tbody>
   </table>
   <h2>七、后续工程切换：整体 TypeScript 化（2026-11-19）</h2>
+  <p class="src">本节数字为该轮当时值；现状见 §10 与 docs/00</p>
   <div class="card">
     <ul>
       <li><strong>范围</strong>：<code>src/</code> 24 个模块 <code>.js → .ts</code>，<code>strict: true</code> 全量标注（本地 <code>typescript@5.6.3</code> 与全局 TS 7.0 <code>tsc --noEmit</code> 均零错误、无隐式 any）；<code>scripts/</code> 的 17 个 <code>.mjs</code> 保持原生 Node 运行，不引入 <code>tsx</code> 之类运行时依赖。</li>
@@ -158,6 +173,7 @@
   </div>
 
   <h2>八、显式 any 全面收敛（2026-11-19）</h2>
+  <p class="src">本节数字为该轮当时值；现状见 §10 与 docs/00</p>
   <div class="card">
     <ul>
       <li><strong>规模</strong>：全仓 205 处显式 <code>any</code> 归零，覆盖 14 个文件（<code>stock-chart.ts</code> 81、<code>chart-context.ts</code> 42、<code>trade-tape.ts</code> 25、<code>depth-book.ts</code> 18 等）；另补齐 tsc 推断产生的 15 处声明级 <code>any</code>，<code>src/**/*.ts</code> 与 <code>dist/**/*.d.ts</code> 均为 0。</li>
@@ -168,9 +184,10 @@
   </div>
 
   <h2>九、数据分层与算法单元化（2026-11-20）</h2>
+  <p class="src">本节数字为该轮当时值；现状见 §10 与 docs/00</p>
   <div class="card">
     <ul>
-      <li><strong>数据分层</strong>：审查确认 10 个业务 JSON 中只有 2 个真实公开行情输入（日 K 935 根、分时 267 点）+ 1 份静态流通股本，其余 8 个均由构建期确定性生成。按「尽量少依赖外部数据」把 <code>chips / intraday_5d / depth_full / depth_scenarios</code> 四个纯派生 JSON 删除，改由 <code>src/core/derive-dataset.ts</code> 在运行时生成；<code>manifest.files / provenance</code> 收敛为 6 键，另 4 个 Level-2 示意数据保留（真实逐笔/委托簿需授权，无法由分钟数据反推）。</li>
+      <li><strong>数据分层</strong>：审查确认 10 个业务 JSON 中只有 2 个真实公开行情输入（日 K 935 根、分时 267 点）+ 1 份静态流通股本，其余 8 个均由构建期确定性生成。按「尽量少依赖外部数据」把 <code>chips / intraday_5d / depth_full / depth_scenarios</code> 四个纯派生 JSON 删除，改由 <code>src/core/derive-dataset.ts</code> 在运行时生成；<code>manifest.files / provenance</code> 收敛为 6 键（当时），另 4 个 Level-2 示意数据保留（真实逐笔/委托簿需授权，无法由分钟数据反推）。</li>
       <li><strong>算法单元</strong>：新建 <code>src/algorithms/</code> 共 18 个纯 TS 模块，以「概念」而非「图表/文件」分割；<code>ALGORITHMS</code> 注册表登记 id / 概念 / 输入输出 / 共用方 / pure 元数据，<code>pure</code> 子入口统一导出；<code>scripts</code> 的三个工具脚本改为薄 re-export，构建期与运行时复用同一实现。</li>
       <li><strong>闭合修复（数值证据）</strong>：分时 15:00 累计额与日 K 差由 +22804.62 元 → 0；逐笔按分钟聚合由 242/242 分钟 amount 不等 → 0 分钟不等；委托流由 261 条悬空挂单 / 两套状态机 → <code>ΣNEW = ΣFILL + ΣCANCEL + Σsnapshot</code> 恒等；多日前 4 日累计量由约为 bars 的 3~4 倍 → 严格相等；全景盘口保持 53 买 / 33 卖档且与「全部挂单」同源、覆盖涨跌停价。</li>
       <li><strong>口径与交互</strong>：换手率统一 <code>%</code>、<code>trim</code> 统一 0 位小数、涨跌幅按各交易日昨收（多日末日 +1.77% 与单日一致）、场景切换改用独立 <code>scenarioPano</code> 不再覆盖 <code>dataset.depthFull</code>、撮合补齐申报价间 0.01 步长中间价候选。</li>
@@ -178,7 +195,19 @@
     </ul>
   </div>
 
-  <p class="src"><strong>处置结论（2026-11-19）：审计发现的 8 组问题全部完成</strong>（P0 两项先做，随后 P1 四组 + P2 两组一次性完成）。累计 <strong>63/63</strong> 测试通过、8 场景截图 0 JS 错误、浏览器事件探针确认单位切换单一派发且下拉同步正常。剩余待观察项仅为「下个主版本移除 <code>getContext()</code>」这类兼容性清理，已标 deprecated，不列入本轮待办。</p>
+  <h2>十、容器 / 布局 / 模块架构落地（2026-11-20）</h2>
+  <div class="card">
+    <p class="src">以下为 2026-11-20 改造前发现；现状：布局委托 Layout、两个 Container、pane 统一 Module/Region、<code>&lt;detail-canvas&gt;</code> 自定义元素。</p>
+    <ul>
+      <li><strong>问题</strong>：审计确认 <code>ChartContext</code> 同时承担状态真源、布局计算、渲染编排三职；<code>applyLayout()</code> 一个方法混合读状态、读 DOM hints、算十余个矩形、回写 pane.rect、回调宿主、派事件、触发重绘八件事；布局计算散落三处；<code>pane</code> 一词六义；详情画布只是页面脚本里的一段 DOM + 8 个全局函数 + 全局状态。</li>
+      <li><strong>概念模型</strong>：Workspace → Container（整体画布 / 详情画布）→ Layout（纯数据 Region 树）→ Region（rect / target / visible / z）→ Module（内容单元）；依赖单向，反向只允许事件。容器下的概念只有布局，模块由 Registry 安排到 Region。</li>
+      <li><strong>落地</strong>：新建 <code>src/architecture/</code>（types / main-canvas-layout / detail-canvas-layout / canvas-decoration / registry / index）；<code>ChartContext.applyLayout()</code> 委托 <code>MainCanvasLayout.compute()</code> 并保留原副作用；新增 <code>&lt;detail-canvas&gt;</code> 自定义元素接管覆盖视图骨架、Layout、ResizeObserver 与销毁；<code>renderFrame</code> 的无主装饰批次抽为 <code>CanvasDecorationModule</code>；<code>MODULE_REGISTRY</code> 登记 11 个模块，<code>TERMINOLOGY</code> 给出旧词→新词映射。</li>
+      <li><strong>零破坏性</strong>：7 个原有公开标签（7 原有 + 新增 <code>detail-canvas</code>，现共 8 个）与 API 不变，CSS 规则不变，视觉零变化。<code>MainCanvasLayout</code> 与旧算法 18 场景 / 294 项逐字段一致；装饰模块 6 场景 / 2736 个 float 逐位一致；详情容器全景 53/33 档、5 栏多组逐笔、三标签切换均 0 JS 错误。</li>
+      <li><strong>验收</strong>：<code>check</code> 通过、<code>test</code> 64/64、<code>typecheck</code> 0 错误、<code>build</code> 51 JS + 52 声明、<code>pack</code> 107 文件；第三方 TS 项目 Bundler / NodeNext / TSX 三种配置均 0 错误。</li>
+    </ul>
+  </div>
+
+  <p class="src"><strong>处置结论（截至 2026-11-21）：§6 台账 8 组全部完成（当时 63/63；当前 97/97）；其后 §7–§10 四轮已落地</strong>——TS 化 66 个 <code>.ts</code> 实现模块 + <code>global.d.ts</code>、0 显式 any、数据分层 <strong>5 键</strong>（5 个落盘 JSON、5 个数据集运行时派生）、算法 18 单元 + <code>ALGORITHMS</code>、两个 Container / 9 个公开标签、跨图闭合断言通过。<strong>模块化阶段二已落地</strong>：12 模块 / 4 预设（full/intraday/candle/minimal），<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据，<code>?modules=</code> / <code>?preset=</code> 在示例页生效，<code>registerModule</code> 为扩展点；组件内置 light/dark 双主题与 <code>#btn-theme</code> 可点击切换，<code>theme-change</code> 保留为纯通知。当前验收：<code>check</code> 通过 / <code>test</code> 97/97 / <code>typecheck</code> 0 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 第三方 TS 三种配置（Bundler·NodeNext·TSX）0 错误 / 4 个 preset CDP 场景 0 JS 错误。本文 §1–§8 数字与结论为各节当时记录，当前状态以本节及 <code>docs/00</code> 为准。剩余待观察：已 deprecated 的 <code>getContext()</code> 兼容性清理。<br><strong>本轮输入层精简（2026-11-20 后续）</strong>：<code>manifest.files/provenance</code> 收敛为 5 键（<code>bars/intraday/auction/depth/orders</code>），<code>trades_20261113.json</code> 删除、逐笔由 <code>buildTradeSeries(intraday)</code> 运行时生成 495 条；需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个（<code>auction</code> 为 <code>l1-intraday-only</code>）；<code>bars</code> 恢复东财 push2his 原生 11 列、四态由 <code>manifest.demoPatterns</code> 记录并在内存叠加 <code>limitState</code>，落盘不再注入改写 OHLC；落盘字段精简、<code>deriveDataset()</code> 运行时补齐、对外 <code>ChartDataset</code> 语义不变，<code>units</code> 5 组统一手/股/% 口径。清理后 <code>verify.mjs</code> 6 条指标基准重算（MACD 柱末 −1.927041、KDJ K末 51.533313 / D末 63.206664，另 3 条未变），分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持；§1–§8 及其括注中的「当时 6 键 / 3 个 licensed / 507 / 1377 / 4 根注入」等历史分节数字均为上一轮增补时点的当时值，未改动。</p>
 
   <div class="foot">
     <p>本报告为工程架构与数据契约审计，示例标的与示例数据仅用于验证数据结构与组件渲染，不构成投资建议。涉及交易所规则与行情授权的部分以监管机构、交易所与持牌信息商最新公示为准。</p>

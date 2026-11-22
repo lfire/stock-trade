@@ -14,7 +14,7 @@ import { loadDerived } from './derived-fixture.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const { derived } = loadDerived();
 const chips = derived.chips;
-const auction = JSON.parse(readFileSync(`${root}src/data/auction_20261113.json`, 'utf8'));
+const auction = derived.auction;   // 落盘竞价已精简，末点量额 / source 由派生层补齐
 const manifest = JSON.parse(readFileSync(`${root}src/data/manifest.json`, 'utf8'));
 const bars = JSON.parse(readFileSync(`${root}src/data/bars_1d.json`, 'utf8'));
 
@@ -93,7 +93,7 @@ test('生成的竞价序列：末点与真实值闭合、匹配量单调不减',
   }
   assert.equal(open.at(-1).virtualPrice, manifest.open);
   assert.equal(close.at(-1).virtualPrice, manifest.close);
-  assert.equal(open.at(-1).volume, JSON.parse(readFileSync(`${root}src/data/intraday_20261113.json`, 'utf8'))[0].volume);
+  assert.equal(open.at(-1).volume, derived.intraday[0].volume);
 });
 
 // ---------- 涨跌停：板块比例 + 0.01 元容差 ----------
@@ -106,7 +106,7 @@ test('涨跌停比例按板块识别（构造代码，非真实标的）', () =>
   assert.equal(limitRateFor('830001.BJ', '北交所示例'), 0.30);
 });
 
-test('涨跌停价四舍五入到分、容差 0.011 元不会误标接近价', () => {
+test('涨跌停价四舍五入到分、容差 1 tick 内不会误标接近价', () => {
   assert.deepEqual(limitPrices(10.005, 0.10), { up: 11.01, down: 9.00 });
   const rate = 0.10, pre = 100.00;
   const { up, down } = limitPrices(pre, rate);
@@ -118,10 +118,29 @@ test('涨跌停价四舍五入到分、容差 0.011 元不会误标接近价', (
   assert.equal(limitStateOf(bar(109.60, 109.60, 100), rate), '', '距涨停 0.40 元不应误标');
   assert.equal(limitStateOf(bar(90.40, 100, 90.40), rate), '', '距跌停 0.40 元不应误标');
   assert.ok(PRICE_EPS < 0.02, '容差应保持在 1 个最小变动单位量级');
-  // 真实数据：4 种形态仍在，且没有非封板价被误标
+  // 四态演示形态：落盘 bars 恢复东财原生（无 limitState），由 manifest.demoPatterns
+  // 驱动 deriveDataset() 在 derived.bars 对应 tradeDate 上内存叠加；状态识别用构造价独立验证。
   const states = ['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'];
-  for (const s of states) assert.ok(bars.some((b) => b.limitState === s), `缺少 ${s} 样本`);
-  assert.equal(bars.filter((b) => b.limitState).length, 4, '0.011 元容差下应只剩 4 根注入形态');
+  assert.equal(manifest.demoPatterns.length, 4);
+  assert.ok(states.every((s) => manifest.demoPatterns.filter((p) => p.state === s).length === 1),
+    'demoPatterns 未恰好覆盖四态');
+  for (const p of manifest.demoPatterns) {
+    const barAt = derived.bars.find((b) => b.tradeDate === p.tradeDate);
+    assert.ok(barAt && barAt.limitState === p.state, `${p.tradeDate} 未叠加 ${p.state}`);
+  }
+  assert.equal(derived.bars.filter((b) => b.limitState).length, 4, '四态应只叠加在 4 根上');
+  assert.ok(bars.every((b) => b.limitState === undefined && b.source === undefined),
+    '落盘 bars 应恢复东财原生，不残留 limitState / source');
+  // 用 demoPatterns 的 state 驱动涨跌停算法：按 state 构造封板/炸板价，limitStateOf 须还原该 state
+  const probes = {
+    limitUp: bar(up, up, 99),
+    limitDown: bar(down, 101, down),
+    limitUpBroken: bar(99.5, up, 99),
+    limitDownBroken: bar(90.5, 101, down),
+  };
+  for (const p of manifest.demoPatterns) {
+    assert.equal(limitStateOf(probes[p.state], rate), p.state, `${p.state} 算法识别不一致`);
+  }
 });
 
 // ---------- 筹码分布口径 ----------

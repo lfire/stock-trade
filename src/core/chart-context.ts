@@ -12,9 +12,13 @@ import { emitEvent } from '../events';
 import { createComputeEngine } from '../compute/engine';
 import { WebGL2Renderer } from '../gl/renderer';
 import { PERIODS, PERIOD_LABEL, DEFAULT_PERIOD, buildBars } from './bar-aggregator';
+import { MainCanvasLayout } from '../architecture/main-canvas-layout';
+import { buildBottomBatches, buildTopBatches } from '../architecture/canvas-decoration';
+import type { DecorationContext } from '../architecture/canvas-decoration';
 import type { ChartMode, ChipMode, IntradayPoint, AuctionPoint, Bar, Palette, MACDParams, MAConfig, SubplotConfig, SubplotLayout, SideRect, PriceScale, NumericInput, ChartDataset, Manifest, PaneElementLike, LayoutHints, ChartContextFacade } from '../types';
 import type { StockChart } from '../elements/stock-chart';
 import type { JsComputeEngine, WasmComputeEngine } from '../compute/engine';
+import type { LayoutInput, PaneSlot, LayoutSnapshot } from '../architecture/types';
 
 type Rect = { x: number; y: number; w: number; h: number };
 type SpanFn = (x: number, y: number, text: string, color?: string, bar?: unknown, align?: string) => string;
@@ -69,28 +73,28 @@ function segmentOverlay(ctx: ChartContext, parts: string[], span: SpanFn, cfg: S
   const p = pts[hover];
   const pct = ((p.virtualPrice - basePrice) / basePrice) * 100;
   // 固定宽度 + 分区卡片：标题/状态胶囊、主价格区、两列对齐的指标区；色点代替「（红）」文字
-  const side = p.unmatchedSide === 1 ? { text: '买方堆积', color: 'var(--sc-up,#E24B4A)' }
-    : p.unmatchedSide === 2 ? { text: '卖方堆积', color: 'var(--sc-down,#1D9E75)' }
-      : { text: '无未匹配', color: 'var(--sc-muted,#9AA3AF)' };
+  const side = p.unmatchedSide === 1 ? { text: '买方堆积', color: 'var(--sw-up,#E24B4A)' }
+    : p.unmatchedSide === 2 ? { text: '卖方堆积', color: 'var(--sw-down,#1D9E75)' }
+      : { text: '无未匹配', color: 'var(--sw-muted,#9AA3AF)' };
   const phaseText = phaseOf(p), canCancel = phaseText === '可撤单时段';
-  const phaseBg = canCancel ? 'var(--sc-panel,#EAF2FE)' : 'var(--sc-panel,#F1F2F4)';
-  const phaseColor = canCancel ? 'var(--sc-link,#1B5FBF)' : 'var(--sc-muted,#6B7280)';
+  const phaseBg = canCancel ? 'var(--sw-panel,#EAF2FE)' : 'var(--sw-panel,#F1F2F4)';
+  const phaseColor = canCancel ? 'var(--sw-link,#1B5FBF)' : 'var(--sw-muted,#6B7280)';
   const bx = Math.round(floatLeft ? r.x - 236 : r.x + r.w + 8), by = Math.round(r.y + 34);
-  const pctColor = pct >= 0 ? 'var(--sc-up,#E24B4A)' : 'var(--sc-down,#1D9E75)';
+  const pctColor = pct >= 0 ? 'var(--sw-up,#E24B4A)' : 'var(--sw-down,#1D9E75)';
   const num = 'font-variant-numeric:tabular-nums';
-  parts.push(`<div style="position:absolute;left:${bx}px;top:${by}px;width:232px;box-sizing:border-box;background:var(--sc-bg,#fff);border:1px solid var(--sc-line,#DDE2E8);border-radius:8px;padding:10px 12px;pointer-events:none;box-shadow:0 6px 18px rgba(31,35,41,.10);font:11px/1.5 system-ui,-apple-system,sans-serif;color:var(--sc-text,#1F2329)">`
-    + `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;font-weight:500">${hoverTitle} <span style="color:var(--sc-muted,#6B7280);font-weight:400;${num}">${p.time}</span></span>`
+  parts.push(`<div style="position:absolute;left:${bx}px;top:${by}px;width:232px;box-sizing:border-box;background:var(--sw-bg,#fff);border:1px solid var(--sw-line,#DDE2E8);border-radius:8px;padding:10px 12px;pointer-events:none;box-shadow:0 6px 18px rgba(31,35,41,.10);font:11px/1.5 system-ui,-apple-system,sans-serif;color:var(--sw-text,#1F2329)">`
+    + `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:12px;font-weight:500">${hoverTitle} <span style="color:var(--sw-muted,#6B7280);font-weight:400;${num}">${p.time}</span></span>`
     + `<span style="flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:4px;background:${phaseBg};color:${phaseColor}">${phaseText}</span></div>`
-    + `<div style="font-size:10px;color:var(--sc-muted,#9AA3AF);margin-top:2px">示意撮合 · 9:15–9:24 虚拟量历史不留存</div>`
-    + `<div style="margin:8px 0;padding:8px 0;border-top:1px solid var(--sc-line,#EEF0F3);border-bottom:1px solid var(--sc-line,#EEF0F3)">`
-    + `<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="color:var(--sc-muted,#6B7280)">虚拟撮合价</span><b style="font-size:16px;font-weight:500;${num}">${p.virtualPrice.toFixed(2)}</b></div>`
-    + `<div style="display:flex;align-items:baseline;justify-content:flex-end;gap:6px;margin-top:2px"><span style="color:${pctColor};font-weight:500;${num}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span><span style="color:var(--sc-muted,#9AA3AF);font-size:10px">${pctLabel}</span></div></div>`
+    + `<div style="font-size:10px;color:var(--sw-muted,#9AA3AF);margin-top:2px">示意撮合 · 9:15–9:24 虚拟量历史不留存</div>`
+    + `<div style="margin:8px 0;padding:8px 0;border-top:1px solid var(--sw-line,#EEF0F3);border-bottom:1px solid var(--sw-line,#EEF0F3)">`
+    + `<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="color:var(--sw-muted,#6B7280)">虚拟撮合价</span><b style="font-size:16px;font-weight:500;${num}">${p.virtualPrice.toFixed(2)}</b></div>`
+    + `<div style="display:flex;align-items:baseline;justify-content:flex-end;gap:6px;margin-top:2px"><span style="color:${pctColor};font-weight:500;${num}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span><span style="color:var(--sw-muted,#9AA3AF);font-size:10px">${pctLabel}</span></div></div>`
     + `<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px">`
-    + `<span style="color:var(--sc-muted,#6B7280)">匹配量</span><b style="text-align:right;font-weight:500;${num}">${p.matchedQty.toLocaleString('zh-CN')} 手</b>`
-    + `<span style="color:var(--sc-muted,#6B7280)">未匹配量</span><b style="text-align:right;font-weight:500;${num}">${p.unmatchedQty.toLocaleString('zh-CN')} 手</b>`
-    + `<span style="color:var(--sc-muted,#6B7280)">挂单方向</span><span style="text-align:right"><i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${side.color};margin-right:5px"></i>${side.text}</span></div></div>`);
+    + `<span style="color:var(--sw-muted,#6B7280)">匹配量</span><b style="text-align:right;font-weight:500;${num}">${p.matchedQty.toLocaleString('zh-CN')} 手</b>`
+    + `<span style="color:var(--sw-muted,#6B7280)">未匹配量</span><b style="text-align:right;font-weight:500;${num}">${p.unmatchedQty.toLocaleString('zh-CN')} 手</b>`
+    + `<span style="color:var(--sw-muted,#6B7280)">挂单方向</span><span style="text-align:right"><i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${side.color};margin-right:5px"></i>${side.text}</span></div></div>`);
   const hx = r.x + ((hover + 0.5) / pts.length) * r.w;
-  parts.push(`<span style="position:absolute;left:${Math.round(hx - 23)}px;top:${Math.round(r.y + r.h - 14)}px;background:var(--sc-text,#1F2329);color:var(--sc-bg,#fff);padding:1px 4px;border-radius:3px;font:10px/1.3 system-ui,-apple-system,sans-serif;pointer-events:none">${p.time}</span>`);
+  parts.push(`<span style="position:absolute;left:${Math.round(hx - 23)}px;top:${Math.round(r.y + r.h - 14)}px;background:var(--sw-text,#1F2329);color:var(--sw-bg,#fff);padding:1px 4px;border-radius:3px;font:10px/1.3 system-ui,-apple-system,sans-serif;pointer-events:none">${p.time}</span>`);
 }
 
 export class ChartContext {
@@ -133,6 +137,8 @@ export class ChartContext {
   declare sideRect: SideRect | null;
   declare frame: number;
   declare dirty: boolean;
+  declare layoutSnapshot: LayoutSnapshot | null;
+  private readonly canvasLayout = new MainCanvasLayout();
   constructor(host: StockChart) {
     this.host = host;
     this.canvas = host.canvas!;
@@ -173,6 +179,7 @@ export class ChartContext {
     this.sideRect = null;
     this.frame = 0;
     this.dirty = false;
+    this.layoutSnapshot = null;
   }
 
   registerPane(el: PaneElementLike) {
@@ -320,10 +327,12 @@ export class ChartContext {
 
   setMode(mode: string) {
     if (mode !== 'candle' && mode !== 'intraday') return;
-    // 第一个副图恒为成交量，K 线 / 分时都不可修改（防御性校正）
+    // 第一个副图恒为成交量，K 线 / 分时都不可修改（防御性校正）；
+    // 无任何 indicator-pane（如 minimal）时空数组守卫跳过，不访问 subs[0]
     const subs = this.panes.filter((p) => p.tagName.toLowerCase() === 'indicator-pane');
-    if (subs[0] && (subs[0].getAttribute('indicator') || '').toUpperCase() !== 'VOL') {
-      subs[0].setAttribute('indicator', 'VOL');
+    const first = subs.length ? subs[0] : null;
+    if (first && (first.getAttribute('indicator') || '').toUpperCase() !== 'VOL') {
+      first.setAttribute('indicator', 'VOL');
     }
     this.mode = mode;
     this.crosshair = null;      // 多日/单日点数不同，旧索引可能越界
@@ -613,79 +622,68 @@ export class ChartContext {
 
   applyLayout() {
     if (!this.size) return;
-    const { w: width, h: height } = this.size;
-    const isIntraday = this.mode === 'intraday';
-    // 多日分时场景不展示集合竞价：rect 置 null 后几何/hover/浮层都自动跳过
-    const auctionOn = this.auctionEnabled && isIntraday && !this.isMultiDay;
-    const chipsOn = this.chipsEnabled && !isIntraday;
+    const size = this.size;
 
-    // 布局尺寸由 element 层读取 DOM 后以结构化 hints 传入，core 不再反向 querySelector
-    const chip = this.panes.find((p) => p.tagName.toLowerCase() === 'chip-pane');
-    const hints = this.host.getLayoutHints?.() || ({} as LayoutHints);
-    const auctionW = auctionOn ? (hints.auctionWidth || 150) : 0;
-    const chipW = hints.chipWidth || 170;
-    const depthW = hints.sideWidth || 210;
-    const rightW = isIntraday ? depthW : (chipsOn ? chipW : 0);
-    const rightX = width - rightW;
-    // 分时模式：画布最左侧 54px 给全局左坐标栏，竞价列右移，中列不再内嵌左留白
-    const leftBar = isIntraday ? AXIS_GUTTER_L : 0;
-    const mainX = leftBar + auctionW;
-    const mainW = Math.max(120, width - mainX - rightW);
-
-    const mainH = Math.round(height * 0.5);   // 主图略收，把更多高度让给副图区
-    this.mainH = mainH;
-    const subH = height - mainH;
-
-    // 中列：主图 1 个 + 副图若干（至少一个）
+    // 全隐藏时强制保留第一个 indicator-pane：DOM 副作用留在 Container 侧先做，
+    // 保证传给 Layout 的 panes 已是修正后的纯数据快照（Layout 不碰 DOM）。
+    // DOM 里没有任何 indicator-pane 时直接跳过（如 minimal 预设无副图），避免对不存在节点操作抛错。
     const drawables = this.panes.filter((p) => typeof p.buildGeometry === 'function');
-    const price = drawables.find((p) => p.tagName.toLowerCase() === 'price-pane');
-    let subs = drawables.filter((p) => p !== price && p.tagName.toLowerCase() !== 'chip-pane' && !p.hasAttribute('hidden'));
-    if (!subs.length) {
+    const priceForFix = drawables.find((p) => p.tagName.toLowerCase() === 'price-pane');
+    const visibleSubs = drawables.filter((p) =>
+      p !== priceForFix && p.tagName.toLowerCase() !== 'chip-pane' && !p.hasAttribute('hidden'));
+    const hasIndicatorPane = this.panes.some((p) => p.tagName.toLowerCase() === 'indicator-pane');
+    if (!visibleSubs.length && hasIndicatorPane) {
       const first = drawables.find((p) => p.tagName.toLowerCase() === 'indicator-pane');
-      if (first) { first.removeAttribute('hidden'); subs = [first]; }
+      if (first) first.removeAttribute('hidden');
     }
-    if (price) price.rect = { x: mainX, y: 0, w: mainW, h: mainH } as SubplotLayout;
-    const pctSum = subs.reduce((s, p) => s + (parseFloat(p.getAttribute('height')!) || 0), 0) || 100;
+
+    // Custom Element panes → Layout 所需的纯数据 PaneSlot[]。
+    const hints = this.host.getLayoutHints?.() || { auctionWidth: 0, chipWidth: 0, sideWidth: 0 };
     const allSubs = this.panes.filter((p) => p.tagName.toLowerCase() === 'indicator-pane');
-    this.infoBars = [];
-    let y = mainH;
-    subs.forEach((p, idx) => {
-      const pct = parseFloat(p.getAttribute('height')!) || 0;
-      const slotH = idx === subs.length - 1 ? height - y : (subH * pct) / pctSum;
-      // 每个副图上方预留独立信息栏，绘图区整体下移
-      p.rect = { x: mainX, y: y + SUBPLOT_INFO_H, w: mainW,
-        h: Math.max(1, slotH - SUBPLOT_INFO_H) } as SubplotLayout;
-      this.infoBars.push({ x: mainX, y, w: mainW, h: SUBPLOT_INFO_H,
-        index: allSubs.indexOf(p), indicator: (p.getAttribute('indicator') || 'VOL').toUpperCase() });
-      y += slotH;
+    const slots: PaneSlot[] = this.panes.map((p): PaneSlot => {
+      const tag = p.tagName.toLowerCase();
+      const kind: PaneSlot['kind'] = tag === 'price-pane' ? 'price'
+        : tag === 'indicator-pane' ? 'indicator'
+          : tag === 'chip-pane' ? 'chip' : 'other';
+      return {
+        kind,
+        height: parseFloat(p.getAttribute('height') || '') || 0,
+        indicator: p.getAttribute('indicator') || 'VOL',
+        hidden: p.hasAttribute('hidden'),
+        drawable: typeof p.buildGeometry === 'function',
+        subIndex: allSubs.indexOf(p),
+      };
     });
-    this.firstSubPane = subs[0] || null;
-    // 竞价列下半部 = 第一个副图的整个槽位（18px 信息栏 + 绘图区），上下边沿严格对齐；其下留白
-    const firstSlotH = (subs[0]?.rect!.h || subH - SUBPLOT_INFO_H) + SUBPLOT_INFO_H;
-    for (const p of drawables) {
-      if (p !== price && !subs.includes(p) && p.tagName.toLowerCase() !== 'chip-pane') p.rect = null;
-    }
+    const input: LayoutInput = {
+      size,
+      hints,
+      state: {
+        mode: this.mode,
+        auctionEnabled: this.auctionEnabled,
+        chipsEnabled: this.chipsEnabled,
+        isMultiDay: this.isMultiDay,
+        openAuctionCount: this.openAuction.length,
+        closeAuctionCount: this.closeAuction.length,
+        panes: slots,
+      },
+    };
 
-    // 左列：开盘竞价
-    this.auctionPriceRect = auctionOn ? { x: leftBar, y: 0, w: auctionW, h: mainH } : null;
-    this.auctionVolumeRect = auctionOn
-      ? { x: leftBar, y: mainH, w: auctionW, h: firstSlotH } : null;
-    // 中列右端：尾盘竞价（14:57–15:00），与连续竞价时间轴相邻。
-    // 宽度按「与开盘竞价列相同的每节点像素密度」换算：150px/69点 × 21点 ≈ 46px，
-    // 两段视觉比例一致（而非占主图固定百分比）。
-    const showClosing = auctionOn && this.closeAuction.length > 0 && this.openAuction.length > 0;
-    this.closingW = showClosing
-      ? Math.max(32, Math.round(auctionW * (this.closeAuction.length / this.openAuction.length)))
-      : 0;
-    const cx = mainX + mainW - AXIS_GUTTER_R - this.closingW;   // 右侧坐标留白让给刻度
-    this.closingPriceRect = showClosing ? { x: cx, y: 0, w: this.closingW, h: mainH } : null;
-    this.closingVolumeRect = showClosing
-      ? { x: cx, y: mainH, w: this.closingW, h: firstSlotH } : null;
+    const snap = this.canvasLayout.compute(input);
+    this.layoutSnapshot = snap;
 
-    if (chip) chip.rect = chipsOn ? { x: rightX, y: 0, w: rightW, h: mainH } as SubplotLayout : null;
-    this.sideRect = isIntraday
-      ? { x: rightX, y: 0, w: rightW, h: height, content: 'depth' }
-      : (chipsOn ? { x: rightX, y: mainH, w: rightW, h: height - mainH, content: 'chips' } : null);
+    // 应用纯数据结果：pane 矩形（null 也写）与各派生量。
+    snap.paneRects.forEach((r, i) => { this.panes[i].rect = r as SubplotLayout | null; });
+    const m = snap.metrics;
+    this.mainH = m.mainH;
+    this.closingW = m.closingW;
+    this.infoBars = m.infoBars;
+    this.auctionPriceRect = m.auctionPriceRect;
+    this.auctionVolumeRect = m.auctionVolumeRect;
+    this.closingPriceRect = m.closingPriceRect;
+    this.closingVolumeRect = m.closingVolumeRect;
+    this.sideRect = m.sideRect;
+    this.firstSubPane = m.firstSubPaneIndex >= 0 ? this.panes[m.firstSubPaneIndex] : null;
+
     this.host.updateSide?.(this.sideRect);
     this.emit('layout-change', { bars: this.getSubplotLayout() });
     this.requestRender();
@@ -703,6 +701,8 @@ export class ChartContext {
   }
 
   renderFrame() {
+    // this.panes 为空时 active / ordered / geometries 均为空数组，后续 renderer.render([])
+    // 与 renderOverlay([]) 都安全，不会访问 this.panes[0]，故空数组不抛错。
     const active = this.dataset
       ? this.panes.filter((p) => p.isConnected && p.rect && typeof p.buildGeometry === 'function')
       : [];
@@ -725,41 +725,15 @@ export class ChartContext {
         geometries.push({ rect: this.closingVolumeRect, vertices: volVerts });
       }
     }
-    // 分时模式：画布最左侧的全局左坐标栏，主图与所有副图共用（底层绘制）
-    if (this.mode === 'intraday' && this.size) {
-      const bar: number[] = [];
-      rect(bar, 0, 0, AXIS_GUTTER_L, this.size.h, rgba(PALETTE.panel, 0.8));
-      line(bar, AXIS_GUTTER_L - 0.5, 0, AXIS_GUTTER_L - 0.5, this.size.h, 1, rgba(PALETTE.grid));
-      geometries.unshift({ rect: { x: 0, y: 0, w: AXIS_GUTTER_L, h: this.size.h }, vertices: bar });
-    }
-    // 两种模式都画统一时间轴带（浅灰底 + 上细线）：分时段贯穿竞价列 + 连续竞价 + 尾盘段，
-    // K 线段贯穿中列；数据绘图区已同步上移 18px，周期切换后日期刻度也落在这条带上
-    if (this.size && this.mainH > 18) {
-      const band: number[] = [];
-      const y0 = this.mainH - 18, x1 = this.sideRect?.x ?? this.size.w;
-      rect(band, 0, y0, x1, this.mainH, rgba(PALETTE.band));
-      line(band, 0, y0, x1, y0, 1, rgba(PALETTE.grid));
-      geometries.push({ rect: { x: 0, y: y0, w: x1, h: 18 }, vertices: band });
-    }
-    // 竞价列只铺到第一个副图槽位；其下的左右留白延续同一灰底，避免副图区出现白/浅色断层
-    if (this.mode === 'intraday' && this.size && (this.auctionPriceRect || this.closingPriceRect)) {
-      const tailY = this.mainH + (this.auctionVolumeRect?.h || 0);
-      const tailH = this.size.h - tailY;
-      if (tailH > 0) {
-        const blank: number[] = [], bg = rgba(PALETTE.band);
-        for (const col of [this.auctionPriceRect, this.closingPriceRect]) {
-          if (col) rect(blank, col.x, tailY, col.x + col.w, this.size.h, bg);
-        }
-        if (blank.length) geometries.push({ rect: { x: 0, y: tailY, w: this.size.w, h: tailH }, vertices: blank });
-      }
-    }
-    // 主图区 / 副图区分界线：贯穿全画布，最后绘制以免被 pane 背景覆盖
-    if (this.size && this.mainH > 0) {
-      const divider: number[] = [];
-      // 与副图信息栏的 inset 1px #ECEEF1 分隔线完全同款：竞价列 / 分时图 / 右列统一，
-      // 不再用 1.5px 深灰线让竞价侧显得更粗
-      line(divider, 0, this.mainH, this.size.w, this.mainH, 1, rgba(PALETTE.grid));
-      geometries.push({ rect: { x: 0, y: 0, w: this.size.w, h: this.size.h }, vertices: divider });
+    if (this.layoutSnapshot) {
+      const decoCtx: DecorationContext = {
+        size: this.size!, mainH: this.mainH, sideRect: this.sideRect,
+        auctionPriceRect: this.auctionPriceRect, auctionVolumeRect: this.auctionVolumeRect,
+        closingPriceRect: this.closingPriceRect, palette: this.palette, mode: this.mode,
+      };
+      // 段 1 原为 unshift 到底层，段 2/3/4 原为 push 到末尾；分两组调用以保持原插入顺序
+      geometries.unshift(...buildBottomBatches(decoCtx));
+      geometries.push(...buildTopBatches(decoCtx));
     }
     this.renderer!.render(geometries as Array<{ rect: Rect; vertices: number[] }>);
     this.renderOverlay(active);
@@ -769,7 +743,7 @@ export class ChartContext {
     if (!this.overlay) return;
     // 字体统一 11px；bar=true 的标题项用与副图信息栏一致的浅灰轻量条；align=right 让左栏刻度贴边
     const span: SpanFn = (x, y, text, color, bar, align) =>
-      `<span style="position:absolute;left:${Math.round(x)}px;top:${Math.round(y)}px;color:${color};font:11px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;pointer-events:none;${align === 'right' ? 'transform:translateX(-100%);' : ''}${bar ? 'background:var(--sc-panel,#FAFBFC);border-bottom:1px solid var(--sc-line,#ECEEF1);padding:1px 6px;border-radius:2px;' : ''}">${text}</span>`;
+      `<span style="position:absolute;left:${Math.round(x)}px;top:${Math.round(y)}px;color:${color};font:11px/1.4 system-ui,-apple-system,sans-serif;white-space:nowrap;pointer-events:none;${align === 'right' ? 'transform:translateX(-100%);' : ''}${bar ? 'background:var(--sw-panel,#FAFBFC);border-bottom:1px solid var(--sw-line,#ECEEF1);padding:1px 6px;border-radius:2px;' : ''}">${text}</span>`;
     const parts: string[] = [];
     for (const p of panes) {
       if (typeof p.overlayText !== 'function') continue;
@@ -804,7 +778,7 @@ export class ChartContext {
     const pt = this.pointer;
     if (pt && this.dataset && this.size) {
       const tag = (left: number, top: number, w: number, text: string, bg?: string | null) =>
-        `<span style="position:absolute;left:${Math.round(left)}px;top:${Math.round(top)}px;width:${Math.round(w)}px;box-sizing:border-box;background:${bg || 'var(--sc-text,#3B424D)'};color:var(--sc-bg,#fff);font:11px/16px system-ui,-apple-system,sans-serif;text-align:center;border-radius:2px;padding:0 3px;white-space:nowrap;pointer-events:none">${text}</span>`;
+        `<span style="position:absolute;left:${Math.round(left)}px;top:${Math.round(top)}px;width:${Math.round(w)}px;box-sizing:border-box;background:${bg || 'var(--sw-text,#3B424D)'};color:var(--sw-bg,#fff);font:11px/16px system-ui,-apple-system,sans-serif;text-align:center;border-radius:2px;padding:0 3px;white-space:nowrap;pointer-events:none">${text}</span>`;
       const clampY = (y: number, r: Rect) => Math.max(r.y + 1, Math.min(r.y + r.h - 17, y - 8));
       const pricePane = panes.find((p) => p.tagName.toLowerCase() === 'price-pane');
       const gutterX = this.mode === 'intraday' ? 0 : (pricePane?.rect?.x ?? 0);

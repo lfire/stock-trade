@@ -6,6 +6,9 @@
 > **术语约定**：本文统一用「**逐笔明细**」指代两类数据 —— ① 交易所 Level-2 的原生逐笔数据（如深交所 STEP `UA202` 报文），毫秒级、单向单笔；② 公开接口返回的 3 秒合并分笔。两者粒度不同，组件侧以 `granularity: 'tick' | 'merged3s'` 区分，不可混用。
 > 本文为技术调研，不含任何投资建议。
 
+> **文档定位与现状说明**
+> 本文为第二期扩展数据调研，需求矩阵与公开接口实测为当时结论。当前 `chips` 由 `bars` 在运行时派生（不再预计算静态 JSON），`pane` 一词按 `docs/00` §7 读作 Module / Region。概念定义以 `docs/00` 为准。
+
 ---
 
 ## 0. 结论先行
@@ -119,7 +122,7 @@ interface ChipHistogram {
 - 颜色区分获利盘 / 套牢盘，进阶可做时间分层（火焰山：5 日内 / 5 日前 / N 日内）；
 - 若做成「历史某日的筹码峰」，需要按该日截断计算，**不能只存最新一天的直方图**；
 - 复权口径会影响筹码分布：切换前/后复权时应重算或禁止切换；
-- 数据依赖：历史日 K（含换手率）+ 流通股本 + 除权除息事件，建议在服务端/构建期预计算成静态 JSON，前端只消费直方图。
+- 数据依赖：历史日 K（含换手率）+ 流通股本 + 除权除息事件，建议在服务端/构建期预计算成静态 JSON，前端只消费直方图。（当时建议；现状运行时由 `bars` 派生）
 
 ---
 
@@ -177,8 +180,8 @@ interface AuctionPoint {
   time: string;              // 'HH:mm:ss'，9:15-9:25 或 14:57-15:00
   phase: 'open' | 'close';
   virtualPrice: number;      // 虚拟撮合价（竞价期间）
-  matchedQty: number;        // 虚拟匹配量，股
-  unmatchedQty: number;      // 虚拟未匹配量，股
+  matchedQty: number;        // 虚拟匹配量，手（lot）
+  unmatchedQty: number;      // 虚拟未匹配量，手（lot）
   unmatchedSide: 0 | 1 | 2;  // 见 4.1
   volume: number;            // 实际成交量（竞价期间为 0，9:25 统一撮合后才有）
   amount: number;
@@ -186,6 +189,8 @@ interface AuctionPoint {
 ```
 
 > ⚠️ 集合竞价阶段的成交**没有明确主动方向，交易所不打 B/S 标志**。因此：竞价成交不能用于计算主力净流入；供应商若在竞价成交上打了 B/S（见 5.4 实测），那是其自行填充，需单独标记来源。
+>
+> **单位与现状口径**：本节为二期建议模型；当前 `auction_20261113.json` 落盘 `matchedQty` / `unmatchedQty` 单位为**手**（`manifest.units.auction.matchedQty='lot'`），与 `intraday.volume` 的**股**相差 100 倍，换算统一用 `LOT_SIZE`。落盘竞价仅 7 字段，`volume` / `amount` / `source` 等由 `deriveDataset()` 运行时补齐（详见 `docs/00` §3.4 与 `src/data/SOURCES.md`）。
 
 ---
 
@@ -288,6 +293,8 @@ interface AuctionPoint {
 
 ## 6. 统一数据模型扩展（在第一章 `Bar` / `IntradayPoint` 之上）
 
+> 本节为二期建议模型；当前对外契约见 `src/types.ts` 的 `ChartDataset`
+
 ```ts
 /** 逐笔明细：归一化为统一语义，同时保留原始编码 */
 interface TradeTick {
@@ -374,6 +381,8 @@ interface ChartDatasetV2 {
 | 十档盘口 | 可选快照回放，按时间戳对齐逐笔；注意快照 3 秒与逐笔毫秒粒度差 |
 | 数据量 | 三层加载：静态主图数据（一次性）→ 聚合副图数据（按日）→ L2 明细（按需分页），各层独立缓存 |
 | 复权 | 筹码峰、量比、资金流都受复权口径影响；建议数据集锁定单一 `adjust`，切换时整体重载 |
+
+> `pane` 现按 docs/00 §7 读作 Module / Region
 
 ---
 

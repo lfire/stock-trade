@@ -136,17 +136,31 @@ test('P1-4 复权标签取自 manifest.adjust', () => {
   assert.ok(!src.includes('`K线(前复权)'), '仍写死前复权');
 });
 
-// ---- P2-5 generatedAt / floatShares ----
-test('P2-5 generatedAt 可复现、floatShares 有来源', () => {
+// ---- P2-5 generatedAt / floatShares / manifest 精简字段 ----
+test('P2-5 generatedAt 可复现、floatShares 归档可追溯、manifest 精简字段齐备', () => {
   const src = rd('scripts/build-sample-data.mjs');
   assert.ok(src.includes('SOURCE_DATE_EPOCH') && src.includes('new Date().toISOString()'));
   assert.ok(!src.includes("generatedAt: '2026-11-16"), '仍写死生成时间');
   assert.ok(!src.includes('floatShares: 1250081601'), '仍写死流通股本');
   const instrument = json('src/data/raw/instrument.json');
   assert.equal(instrument.floatShares, manifest.floatShares);
-  assert.ok(instrument.source && instrument.asOf);
-  assert.ok(manifest.floatSharesSource.includes(instrument.asOf));
-  assert.ok(!Number.isNaN(Date.parse(manifest.generatedAt)));
+  assert.ok(instrument.source && instrument.asOf, '归档 instrument.json 缺少来源/日期标注');
+  assert.ok(!Number.isNaN(Date.parse(manifest.generatedAt)), 'manifest.generatedAt 非法');
+  // floatSharesSource 已从 manifest 移除；来源标注由归档 instrument.json 承载
+  assert.ok(!('floatSharesSource' in manifest));
+  // 输入层精简后新增字段：units 5 组、demoPatterns 4 项
+  assert.equal(Object.keys(manifest.units).length, 5);
+  assert.equal(manifest.units.bars.turnoverRate, 'percent');
+  assert.equal(manifest.units.auction.matchedQty, 'lot');
+  assert.equal(manifest.units.depth.volume, 'share');
+  assert.equal(manifest.demoPatterns.length, 4);
+  assert.ok(['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken']
+    .every((s) => manifest.demoPatterns.some((p) => p.state === s)));
+  // 已删除的旧 manifest 字段不得回归
+  for (const k of ['market', 'timezone', 'currency', 'interval', 'source', 'afterHours',
+    'l2', 'palette', 'upColor', 'downColor']) {
+    assert.ok(!(k in manifest), `manifest 仍残留 ${k}`);
+  }
 });
 
 // ---- P2-6 废弃 API / 命名 / PALETTE ----

@@ -19,7 +19,7 @@ const manifest = rd('manifest.json');
 
 test('A 股业务常量单一真源：组件与生成脚本共用同一份值', () => {
   assert.equal(PRICE_TICK, 0.01);
-  assert.equal(PRICE_EPS, 0.011);
+  assert.equal(PRICE_EPS, 0.001);
   assert.equal(RULE_EPS, PRICE_EPS, 'limit-rules 与 market-constants 不得各写一份容差');
   assert.equal(LOT_SIZE, 100);
   assert.equal(DAY_MINUTES, 240);
@@ -70,28 +70,44 @@ test('纯函数参数防御：n<=0 / NaN / 小数不产生全 NaN 结果', () =>
   assert.equal(computeIndicator('MA', bars, { n: 5 }).values[4].value, 12.5);
 });
 
-test('数据可获得性：manifest.provenance 覆盖全部 6 个 L0 输入并标注授权边界', () => {
+test('数据可获得性：manifest.provenance 覆盖全部 5 个 L0 输入并标注授权边界', () => {
   const keys = Object.keys(manifest.files);
-  assert.equal(keys.length, 6);
+  assert.equal(keys.length, 5);
+  assert.ok(!('trades' in manifest.files), '逐笔已不落盘，不应登记为 L0 输入');
   assert.ok(manifest.provenance, 'manifest 缺少 provenance 摘要');
   for (const k of keys) {
     const p = manifest.provenance[k];
     assert.ok(p, `provenance 缺少 ${k}`);
     assert.ok(p.availability && p.source && typeof p.licensed === 'boolean', `${k} 字段不全`);
   }
-  // Level-2 数据集必须标为需授权
-  for (const k of ['trades', 'depth', 'orders']) {
+  // Level-2 数据集必须标为需授权（仅 depth / orders）
+  for (const k of ['depth', 'orders']) {
     assert.equal(manifest.provenance[k].availability, 'level2-licensed', k);
     assert.equal(manifest.provenance[k].licensed, true, k);
   }
+  assert.equal(Object.values(manifest.provenance)
+    .filter((p) => p.availability === 'level2-licensed').length, 2);
   assert.equal(manifest.provenance.auction.availability, 'l1-intraday-only');
   assert.ok(!manifest.files.chips && !manifest.files.intradayMulti
     && !manifest.files.depthFull && !manifest.files.depthScenarios,
   '运行时派生数据集仍被登记为落盘输入');
+  // manifest 精简字段：units 5 组 / demoPatterns 4 项 / generatedAt 有效，旧字段不再落盘
+  assert.equal(Object.keys(manifest.units).length, 5);
+  assert.equal(manifest.units.bars.turnoverRate, 'percent');
+  assert.equal(manifest.units.auction.matchedQty, 'lot');
+  assert.equal(manifest.units.depth.volume, 'share');
+  assert.equal(manifest.demoPatterns.length, 4);
+  assert.ok(!Number.isNaN(Date.parse(manifest.generatedAt)));
+  for (const k of ['market', 'timezone', 'currency', 'interval', 'source', 'afterHours',
+    'l2', 'floatSharesSource', 'palette', 'upColor', 'downColor']) {
+    assert.ok(!(k in manifest), `manifest 仍残留已删除字段 ${k}`);
+  }
 });
 
-test('数据体来源标注：竞价示意点、多日拟真点、L2 授权字段齐备', () => {
-  const auction = rd(manifest.files.auction);
+test('数据体来源标注：竞价示意点、多日拟真点、派生逐笔与盘口齐备', () => {
+  const { derived } = loadDerived();
+  // 落盘字段已精简，来源 / 授权 / 末点量额等一律对运行时派生层断言
+  const auction = derived.auction;
   assert.equal(auction.length, 90);
   const openA = auction.filter((p) => p.phase === 'open');
   const closeA = auction.filter((p) => p.phase === 'close');
@@ -100,7 +116,6 @@ test('数据体来源标注：竞价示意点、多日拟真点、L2 授权字�
   assert.equal(closeA.at(-1).source, 'anchored-real');
   assert.ok(auction.every((p) => p.priceBasis === 'SSE-3.5.2-max-volume'));
 
-  const { derived } = loadDerived();
   const multi = derived.intradayMulti;
   const byDate = new Set(multi.map((p) => p.tradeDate));
   assert.equal(byDate.size, 5);
@@ -108,16 +123,28 @@ test('数据体来源标注：竞价示意点、多日拟真点、L2 授权字�
   assert.ok(multi.filter((p) => p.tradeDate === first).every((p) => p.source === 'simulated-from-daily-ohlc'));
   assert.ok(multi.filter((p) => p.tradeDate === manifest.tradeDate).every((p) => p.source === 'real-intraday'));
 
-  const trades = rd(manifest.files.trades);
-  assert.ok(trades.every((t) => t.license === 'public-demo' && t.requiresAuthorization === true));
-  const depth = rd(manifest.files.depth);
-  assert.ok(depth.every((d) => d.source === 'mock' && d.requiresAuthorization === true));
+  // 逐笔 / 盘口 / 委托由 deriveDataset() 在运行时补齐，落盘不再有这些字段
+  assert.equal(derived.trades.length, 495);
+  assert.ok(derived.trades.every((t) => t.license === 'public-demo' && t.requiresAuthorization === true
+    && t.granularity && t.sideSource && t.rawSide !== undefined));
+  assert.equal(derived.depth.source, 'mock');
+  assert.equal(derived.depth.requiresAuthorization, true);
+  assert.ok([...derived.depth.bids, ...derived.depth.asks].every((d) => d.orderCount > 0));
+  assert.ok(derived.orders.every((o) => o.level && o.phase && o.tag !== undefined));
   const chips = derived.chips;
   assert.equal(chips.source, 'estimated-model');
   assert.equal(chips.estimated, true);
   assert.equal(chips.peakSource, 'vwap');
-  const bars = rd(manifest.files.bars);
-  assert.equal(bars.filter((b) => b.source === 'injected-demo').length, 4);
+
+  // 四态改由 manifest.demoPatterns 驱动，derived.bars 在对应 tradeDate 内存叠加 limitState
+  const states = ['limitUp', 'limitDown', 'limitUpBroken', 'limitDownBroken'];
+  assert.equal(manifest.demoPatterns.length, 4);
+  assert.ok(states.every((s) => manifest.demoPatterns.filter((p) => p.state === s).length === 1));
+  for (const p of manifest.demoPatterns) {
+    const bar = derived.bars.find((b) => b.tradeDate === p.tradeDate);
+    assert.ok(bar && bar.limitState === p.state, `${p.tradeDate} 未叠加 ${p.state}`);
+  }
+  assert.equal(derived.bars.filter((b) => b.limitState).length, 4);
 });
 
 test('SOURCES.md 覆盖派生的 Level-2 数据集', () => {

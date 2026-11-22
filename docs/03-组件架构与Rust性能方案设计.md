@@ -5,6 +5,9 @@
 > 本期任务：**自行实现 1 个以上 Web 组件**，把前两期全部数据需求统一收进一套架构，性能相关部分用 **Rust → WebAssembly** 实现。
 > 本文为技术方案，不含任何投资建议。文中性能数字均为**设计估算**，需实测验证。
 
+> **文档定位与现状说明**
+> 本文为第三期**方案设计**，Rust/WASM 多线程、列式存储、`ts-rs` 类型生成、Cargo 工程结构与拟定 API 均为**规划、尚未落地**。当前为纯 TS 工程：`JsComputeEngine` + `src/algorithms/` 18 单元 + `src/architecture/` 四层架构 + 9 个公开标签 + 两个 Container；`src/data/` 5 键驱动（bars/intraday/auction/depth/orders）、5 个数据集运行时派生（chips/intradayMulti/depthFull/depthScenarios/trades，逐笔明细不再落盘）；落盘 bars 保持东财 push2his 原生 11 列映射，演示四态由 `manifest.demoPatterns` 在内存叠加。文中 L0–L4 是**方案分层编号**，与 `docs/00` 数据分层 L0/L1/L2 不同义。概念定义以 `docs/00` 为准。
+
 **变更记录**
 
 - **2026-11-16 第一次修订**：固化 6 项决策 —— Web Components、**渲染后端直接上 WebGL2**、**L2 双来源**、**筹码峰 9 项/150 档双模式可切换**、**不做 SSR**、**浅色主题单一基线**；当时 COOP/COEP 暂不纳入。
@@ -13,6 +16,8 @@
 ---
 
 ## 0. 方案摘要（关键决策）
+
+> （方案规划，非已实现）
 
 | # | 决策 | 理由 |
 |---|---|---|
@@ -67,6 +72,8 @@
 
 ## 2. 总体分层架构
 
+> （方案规划，非已实现）
+
 ```mermaid
 flowchart TB
   A["L0 静态数据分片<br/>manifest / bars.bin / chips.json<br/>trades_l2_*.bin / trades_merged_*.bin"] --> B
@@ -94,7 +101,11 @@ flowchart TB
 | 交易明细 | `<trade-tape>` | 虚拟滚动、B/S/C 着色、**双来源与粒度徽标**、与 crosshair 联动 | `TradeTick[]` 分页 | P3 |
 | 十档盘口 | `<depth-book>` | 十档深度、快照回放 | `DepthSnapshot[]` | P3（可选） |
 
+> 当时规划 7 个组件；当时 8 个公开标签（新增 `<detail-canvas>`）、当前 9 个（再新增 stock-workspace）
+
 > P0 即 **3 个独立组件**，满足「一个以上」；完整方案 7 个。pane 类需挂在 `<stock-chart>` 内，`<trade-tape>` / `<depth-book>` 可独立使用（通过 `context` 属性注入）。
+
+> 以下为拟定 API，尚未全部落地；当前以 `src/elements/stock-chart.ts` 为准
 
 ### 3.2 声明式用法
 
@@ -121,6 +132,8 @@ flowchart TB
 ```
 
 `source="auto"` 由 `manifest.l2.providers` 决定优先使用授权逐笔还是公开合并分笔；也可显式指定 `exchange` / `public-merged`。
+
+> 以下为拟定 API，尚未全部落地；当前以 `src/elements/stock-chart.ts` 为准
 
 ### 3.3 根容器 `<stock-chart>` API
 
@@ -182,7 +195,7 @@ flowchart TB
 | 筹码：获利 / 套牢 | `#F5A623` / `#4A90D9` | 火焰山可再按时间分层 |
 | 中性成交 `N/M` | `#9AA3AF` | 灰色 |
 
-色板常量在 TS 侧定义，构建顶点时以 packed RGBA 传入 Rust；不保留深色分支。
+色板常量在 TS 侧定义，构建顶点时以 packed RGBA 传入 Rust；不保留深色分支。（当时规划；现状几何与色板均在 TS 侧并已提供多主题）
 
 ---
 
@@ -271,6 +284,8 @@ interface L2Provider {
 
 ### 4.5 筹码峰双模式数据（已确认）
 
+> 当时草案；当前字段见 `src/types.ts` 的 `ChipDataset` / `ChipHistogram`（无 `prices`/`ageLayers`）
+
 ```ts
 interface ChipDataset {
   symbol: string;
@@ -291,6 +306,8 @@ interface ChipDataset {
 ---
 
 ## 5. Rust 与 TS 的职责边界
+
+> （方案规划，非已实现）
 
 | 任务 | 归属 | 理由 |
 |---|---|---|
@@ -370,6 +387,8 @@ pointermove（主线程算像素 x）
 
 ### 6.1 静态分片目录
 
+> 以下为规划的静态分片方案；当前 src/data 仅 5 个 JSON + manifest，5 类数据集运行时派生
+
 ```text
 /data/600519.SH/
   manifest.json                          # symbol / market / timezone / adjust / session
@@ -378,7 +397,7 @@ pointermove（主线程算像素 x）
   bars_1d.bin
   bars_1m_2026.bin
   intraday_20261113.bin
-  chips_20261113.json                    # ChipDataset
+  chips（运行时派生，已删除同名落盘文件）
   auction_20261113.json
   trades_l2_20261113_p0001.bin           # 授权逐笔（tick），按 license 决定是否分发
   trades_merged_20261113_p0001.bin       # 公开 3 秒合并分笔（merged3s）
@@ -396,6 +415,8 @@ pointermove（主线程算像素 x）
 | 明细层 | `trades_l2_*` / `trades_merged_*` / `depth` 分页 | 视口进入时按需分页，Worker 解码后 transfer `ArrayBuffer` |
 
 ### 6.3 Worker 拓扑与多线程启用（本次重写）
+
+> （方案规划，非已实现）
 
 用户已确认部署环境可以设置 COOP/COEP，因此**启用 WASM 多线程**，但采用官方推荐的 **双构建 + 运行时特性检测**，保证任何环境都能运行。
 
@@ -532,7 +553,9 @@ export default defineConfig({
 
 ---
 
-## 8. 工程结构
+## 8. 工程结构（方案规划，非当前仓库）
+
+> 当前实现为 src/ + scripts/ + docs/
 
 ```text
 stock-chart/
@@ -616,7 +639,7 @@ Cargo features：`simd128`（默认）、`webgl2`（默认）、`threads`（**�
 | 3 | L2 数据来源与授权 | **授权逐笔 + 公开 3 秒合并分笔，两种都要** |
 | 4 | 筹码峰深度 | **9 项统计 + 150 档直方图，运行时可切换** |
 | 5 | SSR / 首屏骨架 | **不需要** |
-| 6 | 主题与涨跌颜色 | **浅色主题、A 股红涨绿跌** |
+| 6 | 主题与涨跌颜色 | **浅色主题、A 股红涨绿跌**（当时决策；现状支持 light/dark 双主题） |
 | 7 | COOP/COEP | **部署环境可以支持** → 启用 WASM 多线程 + 双构建自动降级 |
 
 ### 11.2 COOP/COEP 部署与启用清单
@@ -654,7 +677,7 @@ add_header Cross-Origin-Embedder-Policy "require-corp" always;
 |---|---|
 | 一期 §3 真实数据样例 | `market-codec` 解析规则、单位与字段顺序归一化 |
 | 一期 §5 图表库数据契约 | 仅作字段设计参考，运行时不依赖任何图表库 |
-| 一期 §6 统一 TS 模型 | 对外 API 契约（`Bar` / `IntradayPoint`） |
+| 一期 §6 统一 TS 模型 | 当时拟定的对外契约（现状见 `src/types.ts`） |
 | 一期 §7 静态文件建议 | §6.1 分片目录与 `manifest.json` 元数据 |
 | 一期 §8 坑点 Checklist | §1 约束回溯、§10 风险 |
 | 二期 §1 数据依赖矩阵 | §3.1 组件清单与副图注册 |
@@ -662,7 +685,7 @@ add_header Cross-Origin-Embedder-Policy "require-corp" always;
 | 二期 §3 筹码峰两种形态 | §4.5 双模式可切换、`market-chips` |
 | 二期 §4 集合竞价 | `<auction-pane>` 独立坐标系 |
 | 二期 §5 L2 / B/S/C | §4.4 双来源适配、§6.4 L2 聚合分片 |
-| 二期 §6 `ChartDatasetV2` | 对外数据集契约 |
+| 二期 §6 `ChartDatasetV2` | 当时拟定的对外契约（现状见 `src/types.ts`） |
 | 二期 §7 pane 架构影响 | §3.4 `ChartContext`、§5.1 单 context scissor |
 
 ---

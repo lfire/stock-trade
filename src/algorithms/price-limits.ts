@@ -24,7 +24,7 @@ export function limitPrices(preClose: number, rate: number): { up: number; down:
 }
 
 /**
- * 涨跌停 / 炸板判定：容差固定 0.011 元，不再用 preClose×0.5% 的相对容差
+ * 涨跌停 / 炸板判定：容差固定 0.001 元（远小于 1 个最小变动单位），不再用 preClose×0.5% 的相对容差
  * （后者会把接近涨跌停但并未封板的 K 线误标）。
  */
 export function limitStateOf(bar: Bar, rate: number = limitRateFor('')): LimitState {

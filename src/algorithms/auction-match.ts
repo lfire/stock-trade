@@ -71,11 +71,13 @@ export function matchAuction(
   }
   const prices = [...priceSet].sort((a, b) => a - b);
   let best: Candidate | null = null;
+  let maxQty = 0;
   for (const p of prices) {
     let buyQty = 0, sellQty = 0;
     for (const b of buy) if (b.price >= p) buyQty += b.qty;
     for (const a of sell) if (a.price <= p) sellQty += a.qty;
     const matchedQty = Math.min(buyQty, sellQty);
+    maxQty = Math.max(maxQty, matchedQty);
     const unmatchedQty = Math.abs(buyQty - sellQty);
     const cand: Candidate = { price: p, matchedQty, unmatchedQty, buyQty, sellQty };
     if (best === null) { best = cand; continue; }
@@ -87,6 +89,11 @@ export function matchAuction(
     if (better) best = cand;
   }
   if (!best) return { price: refPrice, matchedQty: 0, unmatchedQty: 0, unmatchedSide: 0 };
+  // 无任何候选价可成交（最大成交量仍为 0）：买卖申报价无交叉，不应返回最低申报价
+  // 之类的伪成交价。回退到参考价、成交量归零、未匹配方向归零，其余字段沿用 best 口径。
+  if (maxQty === 0) {
+    return { price: refPrice, matchedQty: 0, unmatchedQty: best.unmatchedQty, unmatchedSide: 0 };
+  }
   const unmatchedSide: 0 | 1 | 2 = best.buyQty > best.sellQty ? 1 : best.sellQty > best.buyQty ? 2 : 0;
   return {
     price: best.price,

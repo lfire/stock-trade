@@ -5,11 +5,13 @@
 import { PRICE_TICK } from '../core/market-constants';
 
 /**
- * 取整到分（half-up）。加相对 epsilon 修正 JS 浮点误差：
+ * 取整到分（half-away-from-zero：正负均远离零，负数不再被 Math.round 向零截断）。
+ * 加相对 epsilon 修正 JS 浮点误差：
  * 裸 Math.round(n*100) 会把 1.005 算成 1.00、1.015 算成 1.01。
  */
 export function r2(n: number): number {
-  return Math.round((n + Number.EPSILON * Math.abs(n)) * 100) / 100;
+  const sign = n < 0 ? -1 : 1;
+  return sign * Math.round((Math.abs(n) + Number.EPSILON * Math.abs(n)) * 100) / 100;
 }
 
 /** 取整到 6 位小数（比率 / 概率类数值）。 */

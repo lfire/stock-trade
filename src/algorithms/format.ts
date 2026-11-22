@@ -1,7 +1,7 @@
 /**
  * 数值 / 单位格式化（算法单元化收口）：收口 price-pane / indicator-pane /
  * depth-book / stock-chart / index.html 里散落的 1e4 / 1e8 换算。
- * 本模块只提供统一版本，调用方暂不改动（由主代理后续切换）。
+ * 本模块只提供统一版本，组件层可直接复用本模块导出（trim / pickUnit / 单位换算等）。
  */
 
 const WAN = 1e4;
