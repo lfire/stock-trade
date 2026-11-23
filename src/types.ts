@@ -43,6 +43,26 @@ export interface IntradayPoint {
   session: 'morning' | 'afternoon' | 'afterHours';
 }
 
+/**
+ * 历史分时序列：按交易日索引的单日分钟分时（日 K 线点击查看历史分时）。
+ * 数据可得性边界：免费公开源只覆盖近 5 个交易日（末日真实、前几日按日 K OHLC 拟真），
+ * 更早的历史分钟分时无免费公开源，需交易所 / 厂商授权。消费者可经
+ * ChartDataset.historicalIntraday 注入授权数据（source: 'licensed' / 'custom'），
+ * deriveDataset() 会原样保留、不覆盖。
+ */
+export interface HistoricalIntradaySeries {
+  tradeDate: string;
+  points: IntradayPoint[];      // 该日 242 个交易分钟点（<=15:00）
+  preClose: number;             // 该交易日昨收
+  source: 'real-intraday' | 'simulated-from-daily-ohlc' | 'licensed' | 'custom';
+  /** 可选：消费者注入的授权竞价 / 逐笔；未注入时由覆盖视图按端点锚定现场生成示意数据 */
+  auction?: AuctionPoint[];
+  trades?: TradeTick[];
+}
+
+/** 历史分时索引（按 tradeDate）：ChartDataset 注入通道与 DetailData 派生视图共用同一形状。 */
+export type HistoricalIntradayMap = Record<string, HistoricalIntradaySeries>;
+
 /** 集合竞价点（9 秒节点）。竞价期间「价有量无」，仅 9:25 / 15:00 末点锚定真实成交。 */
 export interface AuctionPoint {
   timestamp: number;
@@ -144,6 +164,8 @@ export interface ChartDataset {
   intraday: IntradayPoint[];
   /** 以下均为运行时派生字段；按 modules/preset 按需装载时允许缺省 */
   intradayMulti?: IntradayPoint[];
+  /** 历史分时索引（按 tradeDate）；消费者可选注入通道，注入时 deriveDataset 原样保留 */
+  historicalIntraday?: HistoricalIntradayMap;
   chips?: ChipDataset | ChipDataset[];
   auction?: AuctionPoint[];
   trades?: TradeTick[];
@@ -190,6 +212,7 @@ export interface DetailData {
   depth?: Record<string, unknown>;
   depthFull?: Record<string, unknown> | null;
   depthScenarios?: Record<string, Record<string, unknown>> | null;
+  historicalIntraday?: HistoricalIntradayMap | null;
   manifest?: Manifest;
 }
 export interface HeadMetric { label: string; value: string; }
@@ -353,6 +376,8 @@ export interface StockChartEventMap extends HTMLElementEventMap {
   /** renderer.ts 经 emitEvent 派发的是 CustomEvent（detail 为空对象），与原生 Event 不同 */
   'webglcontext-lost': CustomEvent<Record<string, never>>;
   'webglcontext-restored': CustomEvent<Record<string, never>>;
+  /** 日 K 线请求查看某交易日的历史分时（barIndex 为被点击 K 线下标） */
+  'historical-intraday-request': CustomEvent<{ tradeDate: string; barIndex: number; source: string }>;
 }
 
 /** JSX / 框架薄封装属性（不依赖 react / vue 运行时类型） */

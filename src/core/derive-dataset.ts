@@ -22,6 +22,7 @@ import { avgPriceOf } from '../algorithms/vwap';
 import { PRICE_TICK, LOT_SIZE } from '../core/market-constants';
 import { buildChipDistribution } from '../algorithms/chip-distribution';
 import { buildIntradayMulti } from '../algorithms/intraday-multi';
+import { buildHistoricalIntraday } from '../algorithms/historical-intraday';
 import { buildTradeSeries } from '../algorithms/trade-series';
 import { reduceOrderBook, linkFillsToTrades } from '../algorithms/order-book';
 import { buildDepthScenarios } from '../algorithms/depth-scenarios';
@@ -295,6 +296,8 @@ function anchorIntradayMulti(points: IntradayPoint[], bars: Bar[], lastDate: str
     const arr = groups.get(d);
     if (arr) arr.push(p); else groups.set(d, [p]);
   }
+  // 纯函数：为每个待锚定点生成新对象，绝不就地改写入参数组元素。
+  const anchored = new Map<IntradayPoint, IntradayPoint>();
   for (const [date, arr] of groups) {
     if (date === lastDate) continue;
     const bar = byDate.get(date);
@@ -306,22 +309,28 @@ function anchorIntradayMulti(points: IntradayPoint[], bars: Bar[], lastDate: str
     let cv = 0, ca = 0;
     for (let i = 0; i < arr.length; i += 1) {
       const p = arr[i];
+      let volume: number;
+      let amount: number;
       if (i === arr.length - 1) {
         // 末点吸收整百股取整产生的残差，使当日累计量/额严格等于日 K
-        p.volume = Math.max(0, bar.volume - cv);
-        p.amount = r2(Math.max(0, bar.amount - ca));
+        volume = Math.max(0, bar.volume - cv);
+        amount = r2(Math.max(0, bar.amount - ca));
       } else {
-        p.volume = Math.round(p.volume * kv / 100) * 100;
-        p.amount = r2(p.amount * ka);
+        volume = Math.round(p.volume * kv / 100) * 100;
+        amount = r2(p.amount * ka);
       }
-      cv += p.volume;
-      ca += p.amount;
-      p.cumulativeVolume = cv;
-      p.cumulativeAmount = r2(ca);
-      p.avgPrice = cv > 0 ? r2(avgPriceOf(ca, cv)) : p.price;
+      cv += volume;
+      ca += amount;
+      anchored.set(p, {
+        ...p,
+        volume, amount,
+        cumulativeVolume: cv,
+        cumulativeAmount: r2(ca),
+        avgPrice: cv > 0 ? r2(avgPriceOf(ca, cv)) : p.price,
+      });
     }
   }
-  return points;
+  return points.map((p) => anchored.get(p) ?? p);
 }
 
 /**
@@ -473,17 +482,30 @@ export function deriveDataset(base: ChartDataset, options?: DeriveOptions): Char
     ? buildDepthScenarios(depth, depthFull, ctx)
     : undefined;
 
+  // 7) 历史分时索引：消费者可经 base.historicalIntraday 注入外部授权数据，
+  //    已注入则原样保留；否则仅当 historical-intraday 模块启用且 intradayMulti
+  //    已派生时生成默认 5 日索引（minimal / intraday 预设不装该模块，不做多余计算）。
+  const historicalIntraday = base.historicalIntraday !== undefined
+    ? base.historicalIntraday
+    : (enabled.includes('historical-intraday') && has('intradayMulti') && intradayMulti
+      ? buildHistoricalIntraday(intradayMulti, bars, base.manifest)
+      : undefined);
+
   return {
     ...base,
     bars,
     intraday,
     auction,
-    trades: trades && orders ? linkFillsToTrades(trades, orders) : trades,
+    // trade-tape 单独启用时 requiresData 已补 'orders'，此处 orders 必为数组 → ordIds 完整。
+    // 仍以 orders ?? [] 兜底：trades 一旦派生就始终经过 linkFillsToTrades（不再因 orders
+    // 未派生而整段跳过关联），保证每行都有 ordIds 字段；orders 存在时行为与原式逐字段一致。
+    trades: trades ? linkFillsToTrades(trades, orders ?? []) : trades,
     orders,
     depth,
     depthFull,
     depthScenarios,
     chips,
     intradayMulti,
+    historicalIntraday,
   };
 }

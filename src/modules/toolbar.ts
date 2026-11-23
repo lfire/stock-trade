@@ -1,0 +1,16 @@
+/**
+ * toolbar 模块子路径门面（薄聚合门面，实现仍在共享模块）。
+ *
+ * 只 re-export 配置解析工具、默认配置常量与配置类型，外加该模块描述符；
+ * 不搬运实现、不引入其它模块门面、无注册副作用，可独立加载（SSR 安全）。
+ */
+import { MODULE_CATALOG, type WorkspaceModuleDef } from '../workspace/module-catalog';
+
+/** 模块 id 字面量，与 MODULE_CATALOG 的键一致。 */
+export const MODULE_ID = 'toolbar';
+/** 模块目录描述符（纯数据，来自零依赖的 module-catalog）。 */
+export const descriptor: WorkspaceModuleDef = MODULE_CATALOG['toolbar'];
+
+export { parseWorkspaceConfig } from '../workspace/url-config';
+export { WORKSPACE_EVENTS, DEFAULT_WORKSPACE_CONFIG } from '../workspace/types';
+export type { WorkspaceConfig, WorkspaceInputs } from '../workspace/types';

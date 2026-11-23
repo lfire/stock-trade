@@ -29,7 +29,7 @@ export async function loadDataset(base: string, options?: LoadOptions) {
 
   const manifest = await get('manifest.json');
   // 模块化加载：只 fetch 启用模块的数据依赖闭包所覆盖的落盘分片。
-  // 不传 options 时 resolveModules 返回全部 12 模块 → 5 个分片全加载（行为不变）。
+  // 不传 options 时 resolveModules 返回全部 13 模块 → 5 个分片全加载（行为不变）。
   const enabled = resolveModules(options ?? { preset: 'full' });
   const need = new Set<DataKey>(requiredDataFor(enabled));
   // manifest.files 驱动：分片集合不再硬编码；单个分片缺失时跳过（由 setDataset() 归一化兜底），

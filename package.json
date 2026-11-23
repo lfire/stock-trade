@@ -69,7 +69,10 @@
       "default": "./dist/frameworks/*.js"
     },
     "./elements/*.js": "./dist/elements/*.js",
-    "./elements/*": "./dist/elements/*.js"
+    "./elements/*": "./dist/elements/*.js",
+    "./workspace/*": { "types": "./dist/workspace/*.d.ts", "default": "./dist/workspace/*.js" },
+    "./modules/*": { "types": "./dist/modules/*.d.ts", "default": "./dist/modules/*.js" },
+    "./modules/*.js": "./dist/modules/*.js"
   },
   "files": ["dist", "README.md", "LICENSE"],
   "sideEffects": false,

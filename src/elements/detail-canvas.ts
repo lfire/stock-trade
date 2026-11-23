@@ -23,19 +23,21 @@ const REGION_SELECTORS: Readonly<Record<string, string>> = Object.freeze({
   'cover-tabs': '.cover-tabs',
   'cover-groups': '.cover-groups',
   'cover-panorama': '.cover-panorama',
+  'cover-intraday': '.cover-intraday',
   'cover-scroll': '.cover-scroll',
   'cover-scroll-spacer': '.cover-scroll-spacer',
   'cover-count': '.cover-count',
   'cover-body': '.cover-body',
 });
 
-/** 原 openTapeDetail() 的 innerHTML 模板，逐字保留（含三个 data-set 按钮） */
+/** 原 openTapeDetail() 的 innerHTML 模板，逐字保留（含四个 data-set 按钮） */
 const DETAIL_SKELETON = `
     <div class="cover-bar">
       <span class="cover-tabs">
         <button type="button" data-set="trades">逐笔明细</button>
         <button type="button" data-set="orders">全部挂单</button>
         <button type="button" data-set="panorama">全景盘口</button>
+        <button type="button" data-set="intraday">历史分时</button>
       </span>
       <span class="cover-count"></span>
       <button type="button" class="cover-back">返回图表 ›</button>
@@ -44,6 +46,7 @@ const DETAIL_SKELETON = `
       <div class="cover-scroll"><div class="cover-scroll-spacer"></div></div>
       <div class="cover-groups"></div>
       <div class="cover-panorama"></div>
+      <div class="cover-intraday"></div>
     </div>`;
 
 /** compute() 只消费 size 与 detail；hints / state 是 LayoutInput 的形状占位 */
@@ -141,10 +144,12 @@ export class DetailCanvas extends HTMLElement {
     return snapshot;
   }
 
-  /** 切换数据集：切 .pano-mode（原 applyDetailMode）并重算布局 */
+  /** 切换数据集：切 .pano-mode / .intraday-mode（互斥，原 applyDetailMode）并重算布局 */
   setDetailSet(set: DetailSet): void {
     this.set = set;
-    this.region('cover-body')?.classList.toggle('pano-mode', set === 'panorama');
+    const body = this.region('cover-body');
+    body?.classList.toggle('pano-mode', set === 'panorama');
+    body?.classList.toggle('intraday-mode', set === 'intraday');
     this.applyLayout();
   }
 

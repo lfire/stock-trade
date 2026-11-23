@@ -7,7 +7,7 @@
 import { LAYOUT } from '../types';
 import type { Layout, LayoutInput, LayoutSnapshot, Region } from './types';
 
-export type DetailSet = 'trades' | 'orders' | 'panorama';
+export type DetailSet = 'trades' | 'orders' | 'panorama' | 'intraday';
 
 export interface DetailLayoutInput extends LayoutInput {
   detail: {
@@ -45,17 +45,22 @@ export class DetailCanvasLayout implements Layout {
     const n = detailGroupCount(width);
     const L = detailRowsPerGroup(bodyH);
     const spacerH = Math.max(0, (totalRows - n * L + L) * LAYOUT.rowH);
+    // 三态互斥：连续时间线（逐笔 / 挂单）/ 全景盘口 / 历史分时
     const isPano = set === 'panorama';
+    const isIntraday = set === 'intraday';
+    const isTimeline = !isPano && !isIntraday;
 
     const regions: Record<string, Region> = {
       'cover-tabs': region('cover-tabs', { x: 0, y: 0, w: width, h: barH }, true, 1,
         '顶部标签栏，固定一个 barH'),
-      'cover-groups': region('cover-groups', { x: 0, y: barH, w: width, h: bodyH }, !isPano, 1,
+      'cover-groups': region('cover-groups', { x: 0, y: barH, w: width, h: bodyH }, isTimeline, 1,
         `${n} 组 Grid，每组 ${L} 行`),
       'cover-panorama': region('cover-panorama', { x: 0, y: barH, w: width, h: bodyH }, isPano, 1,
         '全景盘口双列，与分组区互斥'),
+      'cover-intraday': region('cover-intraday', { x: 0, y: barH, w: width, h: bodyH }, isIntraday, 3,
+        '历史分时覆盖视图，与逐笔明细 / 全景盘口三态互斥'),
       'cover-scroll-spacer': region('cover-scroll-spacer',
-        { x: 0, y: 0, w: width, h: spacerH }, !isPano, 0, '虚拟滚动占位高度'),
+        { x: 0, y: 0, w: width, h: spacerH }, isTimeline, 0, '虚拟滚动占位高度'),
     };
 
     return {

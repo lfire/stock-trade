@@ -24,6 +24,8 @@ export { aggregateDaily, aggregateIntraday, buildBars, PERIODS } from './aggrega
 export * from './format';
 export * from './chip-distribution';
 export * from './intraday-multi';
+export * from './historical-intraday';
+export type { HistoricalIntradaySeries } from '../types';
 export * from './auction-match';
 export * from './auction-series';
 export * from './trade-series';
@@ -94,6 +96,12 @@ export const ALGORITHMS: Readonly<Record<string, AlgorithmMeta>> = Object.freeze
   'intraday-multi': {
     id: 'intraday-multi', concept: '多日分时（前 N 日由日 K 拟真）', inputs: 'bars、单日 intraday、天数',
     outputs: 'IntradayPoint[]（扁平多日序列）', sharedBy: ['runtime', 'build'], pure: true,
+  },
+  'historical-intraday': {
+    id: 'historical-intraday', concept: '历史分时索引（按交易日分组）',
+    inputs: 'intradayMulti、bars、manifest',
+    outputs: 'Record<tradeDate, HistoricalIntradaySeries>（242 点/日 + preClose + source）',
+    sharedBy: ['runtime', 'build'], pure: true,
   },
   'auction-match': {
     id: 'auction-match', concept: '集合竞价三原则撮合', inputs: '买/卖申报价量、参考价',

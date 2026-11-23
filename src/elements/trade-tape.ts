@@ -148,7 +148,7 @@ export class TradeTape extends HTMLElement {
               height:${bar};padding:0 6px;box-sizing:border-box;
               background:var(--sw-panel,transparent);border-bottom:1px solid var(--sw-line,transparent);color:var(--sw-muted);font-size:10px;
               letter-spacing:.2px}
-        .view{height:calc(100% - ${bar});
+        .view{height:calc(100% - ${bar} - var(--sw-view-extra, 0px));
               overflow:${this._windowMode ? 'hidden' : 'auto'};position:relative;background:var(--sw-bg,transparent);
               scrollbar-width:none;-ms-overflow-style:none}
         .view::-webkit-scrollbar{display:none}

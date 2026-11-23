@@ -32,7 +32,8 @@ function volAt(sec: number, steps: VolStep[]): number {
 function buildOpenAuction(
   bars: Bar[], intraday: IntradayPoint[], iso: string, rnd: Random,
 ): AuctionPoint[] {
-  const last = bars[bars.length - 1];
+  const last = bars.at(-1);
+  if (!last) return [];                          // 防守：无日 K 端点时无可锚定数据
   const openPrice = last.open;                    // 9:25 真实开盘价
   const preClose = last.preClose;                 // 真实昨收
   const firstTick = intraday[0];                  // 09:30 首点，其量额即 9:25 集合竞价成交量
@@ -104,10 +105,15 @@ function buildClosingAuction(
   bars: Bar[], intraday: IntradayPoint[], iso: string, rnd: Random,
 ): AuctionPoint[] {
   // 真实分时里 14:58/14:59 成交量为 0（价有量无），15:00 一次性撮合产生收盘价与成交量。
-  const p1457 = intraday.find((p) => p.time === '14:57')!;   // 连续竞价末价
-  const p1500 = intraday.find((p) => p.time === '15:00')!;   // 15:00 真实收盘集合竞价结果
+  // 入口守卫已保证 intraday 非空；此处用 at(-1) 末点作端点缺失时的回退，去掉非空断言。
+  const tail = intraday.at(-1);
+  if (!tail) return [];
+  const p1457 = intraday.find((p) => p.time === '14:57') ?? tail;   // 连续竞价末价
+  const p1500 = intraday.find((p) => p.time === '15:00') ?? tail;   // 15:00 真实收盘集合竞价结果
   const startPrice = p1457.price;
-  const closePrice = bars[bars.length - 1].close;
+  const lastBar = bars.at(-1);
+  if (!lastBar) return [];                       // 防守：无日 K 端点时无可锚定数据
+  const closePrice = lastBar.close;
   const realVolume = p1500.volume;
   const realAmount = p1500.amount;
   const realLots = realVolume / 100;
@@ -165,6 +171,7 @@ function buildClosingAuction(
 export function buildAuctionSeries(
   bars: Bar[], intraday: IntradayPoint[], iso: string,
 ): AuctionPoint[] {
+  if (!bars.length || !intraday.length) return [];
   const rnd = mulberry32(20261113);
   const open = buildOpenAuction(bars, intraday, iso, rnd);
   const close = buildClosingAuction(bars, intraday, iso, rnd);

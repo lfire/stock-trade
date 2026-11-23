@@ -15,6 +15,7 @@ export * from './architecture/index';
 // 显式列出不冲突的部分，避免 export * 的歧义。
 export { ALGORITHMS } from './algorithms/index';
 export type { AlgorithmMeta } from './algorithms/index';
+export type { HistoricalIntradaySeries } from './types';
 export {
   elapsedMarketMinutes, intradayBucket,
   r2, r6, roundToTick, mulberry32, clockMinutes, isoWeek,
@@ -22,7 +23,7 @@ export {
   pctChg, change, amplitude, pctOf, quoteOf,
   vwapOf, avgPriceOf, amountOf, turnoverRateOf, toIncremental, avgDailyVolume,
   WARMUP, trim, shortNum, pickUnit, fmtQty, fmtVol, fmtMoney, fmtAmt,
-  buildChipDistribution, summarizeChipStats, buildIntradayMulti,
+  buildChipDistribution, summarizeChipStats, buildIntradayMulti, buildHistoricalIntraday,
   matchAuction, makeOrderBook, buildAuctionSeries, buildTradeSeries,
   buildDepthSnapshot, buildOrderFlow, reduceOrderBook, linkFillsToTrades,
   buildDepthScenarios, LIMIT_UP_SEAL_VOLUME, LIMIT_DOWN_SEAL_VOLUME,

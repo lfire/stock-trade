@@ -26,11 +26,12 @@ const OPTIONAL_KEYS = [
   'depthScenarios', 'chips', 'intradayMulti',
 ];
 
-test('模块目录：12 个功能域模块 + 4 个内置预设', () => {
-  assert.equal(Object.keys(MODULE_CATALOG).length, 12);
-  assert.deepEqual(Object.keys(MODULE_PRESETS).sort(), ['candle', 'full', 'intraday', 'minimal']);
-  assert.equal(MODULE_PRESETS.full.length, 12);
-  assert.equal(resolveModules(undefined).length, 12);
+test('模块目录：13 个功能域模块 + 5 个内置预设', () => {
+  assert.equal(Object.keys(MODULE_CATALOG).length, 13);
+  assert.deepEqual(Object.keys(MODULE_PRESETS).sort(), ['candle', 'candle-full', 'full', 'intraday', 'minimal']);
+  assert.equal(MODULE_PRESETS.full.length, 13);
+  assert.ok(MODULE_PRESETS['candle-full']);
+  assert.equal(resolveModules(undefined).length, 13);
   assert.ok(resolveModules({ preset: 'candle' }).includes('chip'));
   assert.ok(!resolveModules({ preset: 'candle' }).includes('auction'));
   assert.deepEqual(resolveModules({ modules: ['core', 'price-candle'] }), ['core', 'price-candle']);
@@ -55,14 +56,14 @@ test('默认全开（不传 options）与 preset:full 逐字段一致', () => {
   for (const k of OPTIONAL_KEYS) assert.notEqual(a[k], undefined, `全开时 ${k} 不应缺省`);
 });
 
-test('preset:candle 只派生 K 线相关数据集', () => {
-  const d = deriveDataset(rawBase, { preset: 'candle' });
+test('preset:candle-full 派生 K 线 + 历史分时索引（覆盖视图依赖带来明细数据）', () => {
+  const d = deriveDataset(rawBase, { preset: 'candle-full' });
   assert.ok(Array.isArray(d.bars) && d.bars.length === 935);
   assert.ok(Array.isArray(d.intraday) && d.intraday.length === 267);
   assert.ok(d.chips, 'candle 含 chip 模块，应派生筹码峰');
-  for (const k of ['auction', 'trades', 'orders', 'depth', 'depthFull', 'depthScenarios', 'intradayMulti']) {
-    assert.equal(d[k], undefined, `${k} 不应派生`);
-  }
+  assert.ok(d.intradayMulti, '历史分时模块需要多日序列');
+  assert.equal(Object.keys(d.historicalIntraday || {}).length, 5, '历史分时索引应覆盖近 5 日');
+  assert.equal(d.auction, undefined, 'candle 不派生竞价');
 });
 
 test('preset:minimal 只保留 core + 分时主图所需数据', () => {

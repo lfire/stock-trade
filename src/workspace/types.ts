@@ -8,7 +8,7 @@ import type { ChartDataset, ChartMode, ChipMode, DepthUnit, MAConfig, MACDParams
 import type { WorkspacePreset } from './module-catalog';
 
 /** 详情画布的数据集选择 */
-export type DetailSet = 'trades' | 'orders' | 'panorama';
+export type DetailSet = 'trades' | 'orders' | 'panorama' | 'intraday';
 
 /** 明细卡片停放位置 */
 export type TapePlacement = 'side' | 'detail';
@@ -28,8 +28,8 @@ export interface WorkspaceConfig {
    */
   modules?: string[];
   /**
-   * 预设档位（'full' | 'intraday' | 'candle' | 'minimal'）。
-   * 仅在 modules 未提供时生效，默认 'full'。
+   * 预设档位（'full' | 'intraday' | 'candle' | 'candle-full' | 'minimal'）。
+   * 仅在 modules 未提供时生效，默认 'full'；candle 为真按需 K 线，candle-full 追加历史分时。
    */
   preset?: WorkspacePreset;
   /**
@@ -55,6 +55,19 @@ export interface WorkspaceConfig {
   tapeZoom: number;
   tapeSet: DetailSet;
   tapeScroll: number;
+  /** 选中的历史交易日（日 K 查看历史分时）；null = 未选中；由 applyConfig 经 setHistoricalIntradayDate 下发主 #chart */
+  historicalIntradayDate: string | null;
+  /**
+   * 历史分时视图内的竞价列开关（与主图 auctionEnabled 独立）。
+   * 消费路径：detail lifecycle → syncAll 读 config 快照 → applyHistoricalViewState 作用于覆盖视图 mini / DOM class；
+   * 不经 ChartApi（mini 是独立实例，不在主 #chart 的公开方法链）。
+   */
+  historicalAuctionEnabled: boolean;
+  /**
+   * 历史分时视图内逐笔明细侧栏的展开态。
+   * 消费路径同 historicalAuctionEnabled：detail → syncAll → applyHistoricalViewState，不经 ChartApi。
+   */
+  historicalTapeExpanded: boolean;
   maPanelOpen: boolean;
   crosshair: number | null;
   pointer: { x: number; y: number } | null;
@@ -83,6 +96,9 @@ export const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
   tapeZoom: 0,
   tapeSet: 'trades',
   tapeScroll: 0,
+  historicalIntradayDate: null,
+  historicalAuctionEnabled: true,
+  historicalTapeExpanded: false,
   maPanelOpen: false,
   crosshair: null,
   pointer: null,

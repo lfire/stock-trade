@@ -33,10 +33,14 @@
 import type { WorkspaceContext, DetailSet } from './types';
 import type {
   ChartMode, DepthUnit, OrderRecord, TradeTick, TradeTapeViewConfig,
+  Bar, IntradayPoint, HistoricalIntradaySeries, AuctionPoint, Manifest,
 } from '../types';
 import { LAYOUT } from '../types';
 import { detailGroupCount } from '../architecture/detail-canvas-layout';
 import { trim } from '../algorithms/format';
+import { CHART_EVENTS } from '../events';
+import { deriveHistoricalDayView } from '../algorithms/historical-intraday';
+import { withTradeTrend } from '../algorithms/trade-series';
 
 /** 一条连续时间线的数据行：逐笔行带 trend 派生字段 */
 type TradeRow = TradeTick & { trend: number };
@@ -92,6 +96,36 @@ interface CoverApi extends HTMLElement {
 
 interface CoverTape { head: HTMLElement; tape: TapeApi; }
 
+/**
+ * 历史分时索引的局部窄接口：DetailData 契约尚未声明 historicalIntraday，
+ * 运行期由 buildDetailData() 以 Record<string, unknown> 附带，故按窄接口断言读取（0 显式 any）。
+ */
+interface HistoricalDetail {
+  historicalIntraday?: Record<string, HistoricalIntradaySeries> | null;
+}
+
+/** 覆盖视图内独立 <stock-chart> 实例的窄接口（setDataset 由组件提供，其余由 HTMLElement 继承） */
+interface IntradayMini extends HTMLElement {
+  setTheme(theme: string | Record<string, string> | null): void;
+  getTheme?(): { theme: string; palette: Record<string, string> } | null;
+  setDataset(dataset: {
+    manifest: Record<string, unknown>;
+    bars: Bar[];
+    intraday: IntradayPoint[];
+    auction?: AuctionPoint[];
+    trades?: TradeTick[];
+    depth?: unknown[];
+    orders?: unknown[];
+  }): void;
+}
+/** 历史分时侧栏的逐笔明细（替代十档盘口，不挂 depth-book） */
+interface HistTape extends HTMLElement {
+  setData(rows: TradeRow[]): void;
+  setViewConfig(cfg: TradeTapeViewConfig): void;
+  setWindow(rows: unknown[]): void;
+}
+
+/** 历史分时来源标注条文案（key 与 HistoricalIntradaySeries.source 对齐） */
 /** 每个 root 一份的闭包状态（替代原页面的全局 let 变量） */
 interface State {
   controller: AbortController;        // mount 级事件（chart / tape-card / book）
@@ -103,6 +137,17 @@ interface State {
   detailFrom: number;
   detailL: number;
   detailSet: DetailSet;
+  intradayMini: IntradayMini | null;  // 覆盖视图内独立分时图实例（自持 WebGL context）
+  renderedIntradayDate: string | null;
+  histGroups: CoverTape[];            // 历史分时展开后的多栏连续时间线
+  histRows: TradeRow[];              // 该历史日的逐笔（展开面板数据源）
+  histFrom: number;                  // 多栏共享的全局起始行
+  histL: number;                     // 每栏可见行数
+  noDataDate: string | null;         // 上次「无数据」提示对应的日期（避免重复提示）
+  noDataHint: HTMLElement | null;    // 组件内轻提示元素
+  miniTheme: string | null;          // mini 已应用的主题签名，避免重复 setTheme
+  sideRO: ResizeObserver | null;     // 观察 mini 侧栏 tape 尺寸，布局稳定后校准视口
+  histRaf: number | null;            // 展开重算的 rAF 句柄（切离/关闭时取消）
   pendingScroll: number | null;
   appliedScroll: number | null;       // 已消费的 tapeScroll，避免重复应用
   allTrades: TradeRow[];
@@ -112,6 +157,41 @@ interface State {
 
 const states = new WeakMap<HTMLElement, State>();
 const DETAIL_ROW_H = LAYOUT.rowH;
+
+/**
+ * 分段连续时间线的视图状态快照：当日 / 历史各持一份独立状态（数据与滚动互不干扰），
+ * 只在调用共享算法时投影成这份快照，不合并成单一全局状态。
+ */
+type TimedRow = { time: string };
+interface Timeline<T extends TimedRow = TimedRow> {
+  rows: readonly T[];  // 当前数据源（当日 detailRows / 历史 histRows）
+  from: number;        // 多栏共享的全局起始行
+  L: number;           // 每栏可见行数
+  n: number;           // 栏数
+}
+
+/** 把全局起始行钳制到 [0, max(0, total - n*L)]，与两个 render*Window 原公式逐字一致。 */
+function clampFrom<T extends TimedRow>(tl: Timeline<T>): number {
+  return Math.max(0, Math.min(tl.from, Math.max(0, tl.rows.length - tl.n * tl.L)));
+}
+
+/** 按当前窗口把整条时间线切成 n 段（rows + 标题字符串），顺序与栏对齐。 */
+function sliceTimelineColumns<T extends TimedRow>(
+  tl: Timeline<T>,
+): Array<{ rows: T[]; title: string }> {
+  return Array.from({ length: tl.n }, (_, g) => {
+    const rows = tl.rows.slice(tl.from + g * tl.L, tl.from + (g + 1) * tl.L);
+    const title = rows.length
+      ? `${g + 1}/${tl.n} · ${rows[0].time}–${rows[rows.length - 1].time} · ${rows.length} 条`
+      : `${g + 1}/${tl.n} · —`;
+    return { rows, title };
+  });
+}
+
+/** 透明滚动层 spacer 高度（px）：只映射整条时间线的起点/终点。 */
+function timelineSpacerHeight<T extends TimedRow>(tl: Timeline<T>): number {
+  return Math.max(0, tl.rows.length - tl.n * tl.L + tl.L) * DETAIL_ROW_H;
+}
 
 function createState(): State {
   return {
@@ -124,6 +204,17 @@ function createState(): State {
     detailFrom: 0,
     detailL: 20,
     detailSet: 'trades',
+    intradayMini: null,
+    renderedIntradayDate: null,
+    histGroups: [],
+    histRows: [],
+    histFrom: 0,
+    histL: 20,
+    noDataDate: null,
+    noDataHint: null,
+    miniTheme: null,
+    histRaf: null,
+    sideRO: null,
     pendingScroll: null,
     appliedScroll: null,
     allTrades: [],
@@ -173,15 +264,81 @@ function coverRegion(ctx: WorkspaceContext, id: string): HTMLElement | null {
     || null;
 }
 
-/** index.html:1411 — 分组/时间线取当前数据集 */
+/**
+ * 历史分时索引：优先 ctx.data()（ChartDataset 已声明该字段），
+ * 回退 detailData 运行期附带的 historicalIntraday（窄接口断言，见 HistoricalDetail）。
+ */
+function historicalMap(ctx: WorkspaceContext): Record<string, HistoricalIntradaySeries> | null {
+  const fromData = ctx.data()?.historicalIntraday;
+  if (fromData) return fromData;
+  return (ctx.detailData() as HistoricalDetail).historicalIntraday ?? null;
+}
+
+/** 实际数据为准：只有索引里确有该日且带有效分钟点，才允许进入历史分时界面 */
+function hasHistoricalSeries(ctx: WorkspaceContext, date: string | null): boolean {
+  if (!date) return false;
+  const series = historicalMap(ctx)?.[date];
+  return !!series && Array.isArray(series.points) && series.points.length > 0;
+}
+
+/** 读不到数据：不打开覆盖视图，只在组件内给一次轻量「无数据」提示 */
+function showNoDataHint(ctx: WorkspaceContext, date: string): void {
+  const s = getState(ctx);
+  if (s.noDataDate === date) return; // 同一日期只提示一次，避免其它 config 变更反复弹出
+  clearNoDataHint(ctx);
+  const card = ctx.root.querySelector('.chart-card');
+  if (!card) return;
+  const doc = ctx.root.ownerDocument;
+  const hint = doc.createElement('div');
+  hint.className = 'hist-no-data';
+  hint.textContent = `无数据 · ${date}`;
+  card.appendChild(hint);          // absolute 浮层，不占文档流、不挤动界面
+  s.noDataDate = date;
+  s.noDataHint = hint;
+  doc.defaultView?.setTimeout?.(() => {
+    hint.remove();
+    if (s.noDataHint === hint) s.noDataHint = null;
+  }, 3000);
+}
+
+function clearNoDataHint(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  s.noDataHint?.remove();
+  s.noDataHint = null;
+  s.noDataDate = null;
+}
+
+/** 释放覆盖视图内独立分时图实例：remove 触发 disconnectedCallback → ctx.destroy() 回收 WebGL */
+function disposeIntradayMini(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  if (s.histRaf != null) {
+    ctx.root.ownerDocument.defaultView?.cancelAnimationFrame?.(s.histRaf);
+    s.histRaf = null;
+  }
+  const mini = s.intradayMini;
+  s.intradayMini = null;
+  s.renderedIntradayDate = null;
+  s.histGroups = [];
+  s.histRows = [];
+  s.histFrom = 0;
+  s.miniTheme = null;
+  s.sideRO?.disconnect();
+  s.sideRO = null;
+  mini?.remove();
+}
+
+/** index.html:1411 — 分组/时间线取当前数据集；全景 / 历史分时不参与虚拟滚动 */
 function detailRows(ctx: WorkspaceContext): DetailRow[] {
   const s = getState(ctx);
+  if (s.detailSet === 'panorama' || s.detailSet === 'intraday') return [];
   return s.detailSet === 'orders' ? s.allOrders : s.allTrades;
 }
 
 /** index.html:1412-1413 — 视角标签 */
 function detailLabel(ctx: WorkspaceContext): string {
-  const labels: Record<string, string> = { orders: '全部挂单', panorama: '全景盘口' };
+  const labels: Record<string, string> = {
+    orders: '全部挂单', panorama: '全景盘口', intraday: '历史分时',
+  };
   return labels[getState(ctx).detailSet] || '逐笔明细';
 }
 
@@ -201,28 +358,25 @@ function applySideExpanded(ctx: WorkspaceContext, on: boolean): void {
 /** index.html:1419-1444 — 一条连续时间线按栏顺排，栏 g 显示 [from+g*L, from+(g+1)*L) */
 function renderDetailWindow(ctx: WorkspaceContext): void {
   const s = getState(ctx);
-  if (s.detailSet === 'panorama' || !s.detailCover || !s.coverTapes.length) return;
+  if (s.detailSet === 'panorama' || s.detailSet === 'intraday'
+    || !s.detailCover || !s.coverTapes.length) return;
   const rowsAll = detailRows(ctx);
   const total = rowsAll.length;
   const n = s.coverTapes.length, L = s.detailL;
-  const maxFrom = Math.max(0, total - n * L);
-  s.detailFrom = Math.max(0, Math.min(s.detailFrom, maxFrom));
+  const tl: Timeline<DetailRow> = { rows: rowsAll, from: s.detailFrom, L, n };
+  const from = clampFrom(tl);
+  s.detailFrom = from;
+  const columns = sliceTimelineColumns({ ...tl, from });
   for (const [g, item] of s.coverTapes.entries()) {
-    const rows = rowsAll.slice(
-      s.detailFrom + g * L,
-      s.detailFrom + (g + 1) * L,
-    );
-    item.tape.setWindow(rows);
-    item.head.textContent = rows.length
-      ? `${g + 1}/${n} · ${rows[0].time}–${rows[rows.length - 1].time} · ${rows.length} 条`
-      : `${g + 1}/${n} · —`;
+    item.tape.setWindow(columns[g].rows);
+    item.head.textContent = columns[g].title;
   }
   const count = coverRegion(ctx, 'cover-count');
   if (count)
-    count.textContent = `${detailLabel(ctx)} · 共 ${total} 条${s.detailSet === 'orders' ? s.orderMix : ''} · ${n} 栏连续时间线 · 第 ${s.detailFrom + 1}–${Math.min(total, s.detailFrom + n * L)} 条`;
+    count.textContent = `${detailLabel(ctx)} · 共 ${total} 条${s.detailSet === 'orders' ? s.orderMix : ''} · ${n} 栏连续时间线 · 第 ${from + 1}–${Math.min(total, from + n * L)} 条`;
   const sc = coverRegion(ctx, 'cover-scroll');
-  if (sc && Math.abs(sc.scrollTop - s.detailFrom * DETAIL_ROW_H) > 1)
-    sc.scrollTop = s.detailFrom * DETAIL_ROW_H;
+  if (sc && Math.abs(sc.scrollTop - from * DETAIL_ROW_H) > 1)
+    sc.scrollTop = from * DETAIL_ROW_H;
 }
 
 /** index.html:1447-1460 — 滚动条范围只对应整条时间线的起点/终点 */
@@ -235,8 +389,10 @@ function updateDetailSpacer(ctx: WorkspaceContext): void {
   if (typeof s.detailCover.spacerHeight === 'number') {
     spacer.style.height = `${s.detailCover.spacerHeight}px`;
   } else {
-    const total = detailRows(ctx).length, L = s.detailL, n = s.coverTapes.length || 1;
-    spacer.style.height = `${Math.max(0, total - n * L + L) * DETAIL_ROW_H}px`;
+    const tl: Timeline<DetailRow> = {
+      rows: detailRows(ctx), from: s.detailFrom, L: s.detailL, n: s.coverTapes.length || 1,
+    };
+    spacer.style.height = `${timelineSpacerHeight(tl)}px`;
   }
 }
 
@@ -286,6 +442,41 @@ function buildDetailGroups(ctx: WorkspaceContext): void {
   s.detailL = Math.max(1, s.coverTapes[0].tape.visibleRows() || 20);
   updateDetailSpacer(ctx);
   renderDetailWindow(ctx);
+}
+
+/** 两套逐笔视图共用的固定层高：组标题 26px（CSS）+ 表头 24px（--sw-bar-h） */
+const TAPE_CHROME_H = 26 + 24;
+
+/**
+ * 上方共享工具栏吸收视口余数：在 openDetail 阶段对所有 tab 统一计算一次，
+ * 保证当日逐笔 / 历史逐笔 / 全部挂单的 .cover-bar 严格等高。
+ * 行高 18px、组标题 26px、表头 24px 三者均不改，只调 cover-bar 的 padding-bottom。
+ */
+/**
+ * 把视口余数【对称】分配到元素上下 padding：总高恰好增加 extra，内容保持垂直居中。
+ * 此前只加 padding-bottom 会让底部计数条 / 工具栏文字偏上。每次先清空 inline padding
+ * 回 CSS 基准，因此幂等、多次调用不累加。
+ */
+function applyBalancedPadding(el: HTMLElement, extra: number): void {
+  el.style.paddingTop = '';
+  el.style.paddingBottom = '';
+  const win = el.ownerDocument.defaultView;
+  const top = parseFloat(win?.getComputedStyle(el).paddingTop || '') || 6;
+  const bottom = parseFloat(win?.getComputedStyle(el).paddingBottom || '') || 6;
+  const up = Math.ceil(extra / 2);
+  el.style.paddingTop = `${top + up}px`;
+  el.style.paddingBottom = `${bottom + extra - up}px`;
+}
+
+function fitCoverBar(ctx: WorkspaceContext): void {
+  const bar = ctx.root.querySelector('.cover-bar') as HTMLElement | null;
+  const body = ctx.root.querySelector('.cover-body') as HTMLElement | null;
+  if (!bar || !body) return;
+  applyBalancedPadding(bar, 0); // 回到 CSS 基准（8px），再量基准视口
+  const viewBase = body.clientHeight - TAPE_CHROME_H;
+  const L = Math.max(1, Math.floor(viewBase / DETAIL_ROW_H));
+  const extra = Math.max(0, Math.floor(viewBase - L * DETAIL_ROW_H));
+  applyBalancedPadding(bar, extra);
 }
 
 /** index.html:1509-1612 — 全景盘口：左右两块列出当前时刻所有有效买/卖价格档位 */
@@ -388,19 +579,359 @@ function renderPanorama(ctx: WorkspaceContext): void {
   const count = coverRegion(ctx, 'cover-count');
   if (count)
     count.textContent = `全景盘口 · ${p.time} 现价 ${p.mid.toFixed(2)} · 买 ${p.bids.length} 档 / 卖 ${p.asks.length} 档 · 显示${isAmt ? '挂单金额' : '挂单量'}（单位自适应）`;
+  // 与两套逐笔视图同构：列表视口严格等于整数行高，底部不留半行/空白
+  fitPanoramaViewport(ctx);
 }
 
-/** index.html:1615-1626 — 切换视角：连续时间线（成交/挂单）与全景盘口互斥显示 */
+/**
+ * 全景盘口：把 .pano-list 视口的不足一行余数吸收到全景专属的 .pano-mid 信息行，
+ * 行高（与逐笔同为 18px）与共享 .cover-bar 都不改，保证各视图相同位置仍等高。
+ * 每次从 CSS 基准重算，幂等、切换场景不累积。
+ */
+function fitPanoramaViewport(ctx: WorkspaceContext): void {
+  const host = coverRegion(ctx, 'cover-panorama');
+  const mid = host?.querySelector('.pano-mid') as HTMLElement | null;
+  const list = host?.querySelector('.pano-list') as HTMLElement | null;
+  const firstRow = list?.querySelector('.pano-row') as HTMLElement | null;
+  if (!mid || !list || !firstRow) return;
+  applyBalancedPadding(mid, 0); // 回到 CSS 基准（6px），再量基准列表视口
+  const pitch = firstRow.getBoundingClientRect().height || DETAIL_ROW_H;
+  const listH = list.clientHeight;
+  const L = Math.max(1, Math.floor(listH / pitch));
+  const extra = Math.max(0, Math.floor(listH - L * pitch));
+  applyBalancedPadding(mid, extra);
+}
+
+/**
+ * 历史分时覆盖视图：按 config.historicalIntradayDate 取索引里的单日序列。
+ *  - 有数据：顶部仅一条功能按钮（竞价开关 / 逐笔展开），独立 <stock-chart> 注入该日实际数据。
+ *  - 无数据：由 syncDetail 前置拦截，不进入本界面；这里只留「无数据」兜底。
+ * 每次渲染前清理上一次 mini 实例，避免多个 WebGL context 泄漏；不切主图数据源、不复用 ctx.chart。
+ */
+function renderHistoricalIntraday(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  const host = coverRegion(ctx, 'cover-intraday');
+  if (!host) return;
+  const date = ctx.config().historicalIntradayDate;
+  const map = historicalMap(ctx);
+  const series = date ? map?.[date] ?? null : null;
+
+  // 同一交易日且 mini 已渲染：只同步竞价开关 / 展开态，避免反复创建销毁 WebGL context
+  if (s.intradayMini && s.renderedIntradayDate === date && series) {
+    applyHistoricalViewState(ctx);
+    return;
+  }
+
+  disposeIntradayMini(ctx);
+  host.replaceChildren();
+  const doc = ctx.root.ownerDocument;
+
+  if (!series) {
+    const msg = doc.createElement('div');
+    msg.className = 'hist-empty';
+    msg.textContent = '无数据';
+    host.appendChild(msg);
+    return;
+  }
+
+  // 只保留功能按钮，不展示任何来源 / 示意说明；数据以实际索引内容为准
+  const bar = doc.createElement('div');
+  bar.className = 'hist-toolbar';
+  const actions = doc.createElement('div');
+  actions.className = 'hist-actions';
+  const auctionBtn = doc.createElement('button');
+  auctionBtn.type = 'button';
+  auctionBtn.id = 'hist-auction-toggle';
+  auctionBtn.addEventListener('click', () => ctx.patchConfig({
+    historicalAuctionEnabled: !ctx.config().historicalAuctionEnabled,
+  }), { signal: s.coverAbort?.signal });
+  const tapeBtn = doc.createElement('button');
+  tapeBtn.type = 'button';
+  tapeBtn.id = 'hist-tape-toggle';
+  tapeBtn.addEventListener('click', () => ctx.patchConfig({
+    historicalTapeExpanded: !ctx.config().historicalTapeExpanded,
+  }), { signal: s.coverAbort?.signal });
+  actions.append(auctionBtn, tapeBtn);
+  bar.appendChild(actions);
+  host.appendChild(bar);
+
+  // 内容区：左侧独立分时实例 + 右侧可展开的放大逐笔面板（不触碰 stock-chart 内部 sideSlot）
+  const body = doc.createElement('div');
+  body.className = 'hist-body';
+  // 独立分时图实例：与主图完全隔离，不复用 ctx.chart、不切主图数据源
+  const mini = doc.createElement('stock-chart') as unknown as IntradayMini;
+  mini.setAttribute('mode', 'intraday');
+  mini.setAttribute('auction', 'on');
+  mini.setAttribute('chips', 'off');
+  // 迷你图是主图的后代（attachCover）：阻断其冒泡事件，避免 dataset-ready 回环触发
+  // bindDataset → applyDetailMode → 再次创建 mini，也避免 chart-error 污染页面诊断。
+  const isolate = (e: Event): void => { e.stopPropagation(); };
+  for (const name of Object.values(CHART_EVENTS)) mini.addEventListener(name, isolate);
+  const price = doc.createElement('price-pane');
+  price.setAttribute('height', '50');
+  mini.appendChild(price);
+  // 与主图相同的副图配置：数量与指标都从 config 读取，动态创建声明式子配置节点
+  const cfg = ctx.config();
+  const subCount = Math.max(1, Math.min(3, cfg.subplotCount ?? 3));
+  const indicators = cfg.subplotIndicators ?? ['VOL', 'AMOUNT', 'MACD'];
+  for (let i = 0; i < subCount; i += 1) {
+    const pane = doc.createElement('indicator-pane');
+    pane.setAttribute('indicator', indicators[i] ?? 'VOL');
+    pane.setAttribute('height', '12');
+    mini.appendChild(pane);
+  }
+  // 逐笔明细侧栏：用 trade-tape 占据 [slot=side]，不挂 depth-book → 不显示十档盘口
+  const tape = doc.createElement('trade-tape') as unknown as HistTape;
+  tape.setAttribute('slot', 'side');
+  tape.setAttribute('order', 'desc');
+  mini.appendChild(tape);
+  body.appendChild(mini);
+  // 多栏逐笔面板：与侧栏共享同一份该日逐笔，展开后全宽覆盖内容区
+  const panel = doc.createElement('div');
+  panel.className = 'hist-tape-panel';
+  // 与当日逐笔一致：透明滚动层提供 scrollTop，多栏 grid 只展示、pointer-events:none 让滚轮穿透
+  const view = doc.createElement('div');
+  view.className = 'hist-tape-view';
+  const scroller = doc.createElement('div');
+  scroller.className = 'hist-tape-scroll';
+  const spacer = doc.createElement('div');
+  spacer.className = 'hist-tape-spacer';
+  scroller.appendChild(spacer);
+  const grid = doc.createElement('div');
+  grid.className = 'hist-tape-grid';
+  view.append(scroller, grid);
+  scroller.addEventListener('scroll', () => {
+    const f = Math.floor(scroller.scrollTop / DETAIL_ROW_H);
+    if (f === s.histFrom) return;
+    s.histFrom = f;
+    renderHistoricalTapeWindow(ctx);
+  }, { signal: s.coverAbort?.signal });
+  const foot = doc.createElement('div');
+  foot.className = 'hist-tape-foot';
+  const pagerInfo = doc.createElement('span');
+  pagerInfo.className = 'hist-tape-info';
+  const hint = doc.createElement('span');
+  hint.textContent = '滚轮切换';
+  foot.append(pagerInfo, hint);
+  panel.append(view, foot);
+  body.appendChild(panel);
+  host.appendChild(body);
+  s.intradayMini = mini;
+  s.renderedIntradayDate = date;
+
+  const base = ctx.data();
+  // 算法层具名派生：一次性产出 dayBars / auction / trades / manifest，UI 只消费返回值
+  const dayView = deriveHistoricalDayView(
+    series, base?.bars ?? [], base?.manifest ?? ({} as Manifest),
+  );
+  const trades: TradeRow[] = withTradeTrend(dayView.trades, series.preClose);
+  mini.setDataset({
+    manifest: dayView.manifest, bars: dayView.dayBars, intraday: series.points,
+    auction: dayView.auction, trades, depth: [], orders: [],
+  });
+  tape.setData(trades);
+  tape.setViewConfig({
+    heads: ['时间', '价格', '成交量', '方向'],
+    labelKey: 'side',
+    cols: '62px 1fr 1fr 30px',
+    colCls: ['', 'num', 'num', 'side'],
+    extraKey: null,
+  });
+  // 侧栏逐笔保持 setData 的滚动模式（setWindow 会覆盖 rows，不能传空数组）
+  s.histRows = trades;
+  s.histFrom = 0;
+  s.histGroups = [];
+  applyHistoricalViewState(ctx);
+  // 侧栏 tape 自身高度不受 --sw-view-extra 影响，观察它可在布局稳定后自动校准；
+  // 配合 fitHistoricalSideTape 的自校正基准，重复触发会收敛到唯一稳定值。
+  const sideTape = mini.querySelector('trade-tape[slot="side"]');
+  const win = ctx.root.ownerDocument.defaultView;
+  if (sideTape && win) {
+    s.sideRO?.disconnect();
+    s.sideRO = new win.ResizeObserver(() => fitHistoricalSideTape(ctx));
+    s.sideRO.observe(sideTape);
+  }
+}
+
+/** 与当日逐笔明细一致：按容器宽度分 N 栏，每栏一个 trade-tape 用 setWindow 承接一段连续时间线 */
+function buildHistoricalTapeGroups(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  const host = coverRegion(ctx, 'cover-intraday');
+  const grid = host?.querySelector('.hist-tape-grid') as HTMLElement | null;
+  if (!grid) return;
+  const n = detailGroupCount(grid.clientWidth || ctx.root.clientWidth || 900);
+  if (s.histGroups.length !== n) {
+    grid.replaceChildren();
+    s.histGroups = [];
+    grid.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
+    const doc = ctx.root.ownerDocument;
+    for (let g = 0; g < n; g += 1) {
+      const col = doc.createElement('div');
+      col.className = 'group';
+      const head = doc.createElement('div');
+      head.className = 'group-head';
+      const t = doc.createElement('trade-tape') as unknown as TapeApi;
+      col.append(head, t);
+      grid.appendChild(col);
+      t.setViewConfig({
+        heads: ['时间', '价格', '成交量', '方向'],
+        labelKey: 'side',
+        cols: '62px 1fr 1fr 30px',
+        colCls: ['', 'num', 'num', 'side'],
+        extraKey: null,
+      });
+      t.setWindow([]);
+      s.histGroups.push({ head, tape: t });
+    }
+  }
+  // 行高（DETAIL_ROW_H = LAYOUT.rowH）与其它列表一致，不改列表项；
+  // 把「不足一行的余数」补到底部计数条的 padding-bottom 上，让 .view 高度恰好 = L*rowH：
+  // 既不裁半行，也不在底部留白。
+  fitHistoricalTapeFoot(ctx);
+  s.histL = Math.max(1, s.histGroups[0]?.tape.visibleRows() || 20);
+  updateHistoricalSpacer(ctx, n);
+}
+
+/**
+ * 底部计数条吸收视口余数：每次都先恢复到 CSS 基准内边距再量基准视口高，
+ * 计算可完整显示的行数 L，把 viewH - L*rowH 补到 padding-bottom（幂等、不随滚轮累积）。
+ */
+function fitHistoricalTapeFoot(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  const host = coverRegion(ctx, 'cover-intraday');
+  const foot = host?.querySelector('.hist-tape-foot') as HTMLElement | null;
+  const tape = s.histGroups[0]?.tape;
+  const view = tape?.shadowRoot?.querySelector('.view') as HTMLElement | null;
+  if (!foot || !view) return;
+  applyBalancedPadding(foot, 0); // 回到 CSS 基准（6px），避免多次调用累加
+  const viewH = view.clientHeight; // 读取会强制同步布局，得到未调整时的基准视口高
+  const L = Math.max(1, Math.floor(viewH / DETAIL_ROW_H));
+  const extra = Math.max(0, Math.floor(viewH - L * DETAIL_ROW_H));
+  applyBalancedPadding(foot, extra);
+}
+
+/** spacer 高度只映射整条时间线的起点/终点，随每栏行数 L 同步更新 */
+function updateHistoricalSpacer(ctx: WorkspaceContext, n: number): void {
+  const s = getState(ctx);
+  const host = coverRegion(ctx, 'cover-intraday');
+  const spacer = host?.querySelector('.hist-tape-spacer') as HTMLElement | null;
+  if (!spacer) return;
+  const tl: Timeline<TradeRow> = { rows: s.histRows, from: s.histFrom, L: s.histL, n };
+  spacer.style.height = `${timelineSpacerHeight(tl)}px`;
+}
+
+/** 多栏共享全局起始行：每栏截取一段连续时间线，标题标注时间范围与条数 */
+function renderHistoricalTapeWindow(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  const n = s.histGroups.length;
+  if (!n) return;
+  // 每次渲染都按当前视口校准每栏行数：视口高度非 rowH 整数倍时只取可完整显示的行，
+  // 否则最后一行下半会被 .view 的 overflow 裁掉（用户反馈的「半行被遮挡」）。
+  const measured = Math.max(1, s.histGroups[0].tape.visibleRows() || s.histL);
+  if (measured !== s.histL) {
+    s.histL = measured;
+    updateHistoricalSpacer(ctx, n);
+  }
+  const L = s.histL;
+  const total = s.histRows.length;
+  const tl: Timeline<TradeRow> = { rows: s.histRows, from: s.histFrom, L, n };
+  const from = clampFrom(tl);
+  s.histFrom = from;
+  const columns = sliceTimelineColumns({ ...tl, from });
+  for (const [g, item] of s.histGroups.entries()) {
+    item.tape.setWindow(columns[g].rows);
+    item.head.textContent = columns[g].title;
+  }
+  const sc = ctx.root.querySelector('.hist-tape-scroll') as HTMLElement | null;
+  if (sc && Math.abs(sc.scrollTop - from * DETAIL_ROW_H) > 1) {
+    sc.scrollTop = from * DETAIL_ROW_H;
+  }
+  const info = ctx.root.querySelector('.hist-tape-info');
+  if (info) {
+    info.textContent = `共 ${total} 条 · ${n} 栏连续时间线 · 第 ${from + 1}–${Math.min(total, from + n * L)} 条`;
+  }
+}
+
+/** 历史分时视图状态：竞价开关下沉到 mini 属性，展开态切 host class，按钮文案同步 */
+/**
+ * 收起态历史分时右侧逐笔栏：把 .view 视口不足一行的余数用 --sw-view-extra 扣掉。
+ * 行高 18px、表头 24px、共享 .cover-bar 全部不变；该变量是动态 CSS，无需重建 shadow DOM。
+ * 每次先移除变量再量基准视口，幂等、切换视图不累积。
+ */
+function fitHistoricalSideTape(ctx: WorkspaceContext): void {
+  const mini = getState(ctx).intradayMini;
+  const tape = mini?.querySelector('trade-tape[slot="side"]') as HTMLElement | null;
+  const view = tape?.shadowRoot?.querySelector('.view') as HTMLElement | null;
+  if (!tape || !view) return;
+  // 用「当前视口 + 已扣减值」反推未扣减的基准视口：布局从中间态稳定后会自动收敛，
+  // 多次调用也不会漂移（幂等）。
+  const current = parseFloat(tape.style.getPropertyValue('--sw-view-extra')) || 0;
+  const viewBase = view.clientHeight + current;
+  const L = Math.max(1, Math.floor(viewBase / DETAIL_ROW_H));
+  const extra = Math.max(0, Math.floor(viewBase - L * DETAIL_ROW_H));
+  tape.style.setProperty('--sw-view-extra', `${extra}px`);
+}
+
+function applyHistoricalViewState(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  const host = coverRegion(ctx, 'cover-intraday');
+  const mini = s.intradayMini;
+  if (!host || !mini) return;
+  fitHistoricalSideTape(ctx); // 竞价开关 / 展开切换 / 短路路径都保持侧栏严格对齐
+  const cfg = ctx.config();
+  // 主题切换同步：mini 是独立 <stock-chart>，不继承主图的 setTheme 调用；
+  // 必须显式下沉，让 WebGL 色板（ctx.palette）与 mini host 的 --sw-* 与根组件同源。
+  const theme = cfg.theme;
+  const themeKey = typeof theme === 'string' ? theme : (theme ? 'custom' : 'light');
+  if (s.miniTheme !== themeKey) {
+    mini.setTheme(theme);
+    s.miniTheme = themeKey;
+  }
+  const auctionOn = cfg.historicalAuctionEnabled !== false;
+  mini.setAttribute('auction', auctionOn ? 'on' : 'off');
+  const expanded = cfg.historicalTapeExpanded === true;
+  host.classList.toggle('hist-tape-expanded', expanded);
+  if (expanded) {
+    const syncGroups = () => {
+      buildHistoricalTapeGroups(ctx);
+      renderHistoricalTapeWindow(ctx);
+    };
+    syncGroups();
+    // 展开后布局尺寸才生效，下一帧按真实宽度重算栏数与每栏可见行数；句柄存 State 供释放时取消
+    s.histRaf = ctx.root.ownerDocument.defaultView?.requestAnimationFrame?.(syncGroups) ?? null;
+  }
+  const aBtn = host.querySelector<HTMLButtonElement>('#hist-auction-toggle');
+  if (aBtn) {
+    aBtn.textContent = `竞价：${auctionOn ? '开' : '关'}`;
+    aBtn.classList.toggle('active', auctionOn);
+  }
+  const tBtn = host.querySelector<HTMLButtonElement>('#hist-tape-toggle');
+  if (tBtn) {
+    tBtn.textContent = expanded ? '收起逐笔明细' : '展开逐笔明细';
+    tBtn.classList.toggle('active', expanded);
+  }
+}
+
+/** index.html:1615-1626 — 切换视角：连续时间线 / 全景盘口 / 历史分时三态互斥显示 */
 function applyDetailMode(ctx: WorkspaceContext): void {
   const s = getState(ctx);
   if (!s.detailCover) return;
-  const pano = s.detailSet === 'panorama';
-  coverRegion(ctx, 'cover-body')?.classList.toggle('pano-mode', pano);
+  const set = s.detailSet;
+  const body = coverRegion(ctx, 'cover-body');
+  body?.classList.toggle('pano-mode', set === 'panorama');
+  body?.classList.toggle('intraday-mode', set === 'intraday');
   coverRegion(ctx, 'cover-tabs')
     ?.querySelectorAll<HTMLButtonElement>('button')
-    .forEach((b) => b.classList.toggle('on', b.dataset.set === s.detailSet));
-  if (pano) renderPanorama(ctx);
-  else buildDetailGroups(ctx);
+    .forEach((b) => b.classList.toggle('on', b.dataset.set === set));
+  if (set === 'intraday') renderHistoricalIntraday(ctx);
+  else {
+    // 切离历史分时：清空 cover-intraday 内残留 DOM（hist-tape-panel 的 scroll 监听已绑
+    // coverAbort.signal，此处只清 DOM 节点，避免隐藏视图残留）
+    coverRegion(ctx, 'cover-intraday')?.replaceChildren();
+    disposeIntradayMini(ctx);
+    if (set === 'panorama') renderPanorama(ctx);
+    else buildDetailGroups(ctx);
+  }
 }
 
 /**
@@ -411,9 +942,9 @@ function switchDetailSet(ctx: WorkspaceContext, set: DetailSet): void {
   const s = getState(ctx);
   if (set === s.detailSet) return;
   s.detailSet = set;
-  s.detailFrom = 0;
+  if (set !== 'intraday') s.detailFrom = 0; // 历史分时不参与虚拟滚动，跳过窗口重置
   if (!s.detailCover) return;
-  s.detailCover.setDetailSet?.(set); // 容器同步 set / pano-mode / 布局快照
+  s.detailCover.setDetailSet?.(set); // 容器同步 set / pano-mode / intraday-mode / 布局快照
   applyDetailMode(ctx);
 }
 
@@ -425,7 +956,8 @@ function applyPendingScroll(ctx: WorkspaceContext): void {
   const s = getState(ctx);
   if (s.pendingScroll == null) return;
   if (!s.detailCover || !s.allTrades.length) return;
-  if (s.detailSet !== 'panorama') {
+  // 全景 / 历史分时均为独立视图，不参与连续时间线虚拟滚动
+  if (s.detailSet !== 'panorama' && s.detailSet !== 'intraday') {
     s.detailFrom = Math.max(0, Math.floor(s.pendingScroll / DETAIL_ROW_H));
     s.detailCover.setWindow?.(s.detailFrom, detailRows(ctx).length);
     renderDetailWindow(ctx);
@@ -436,6 +968,7 @@ function applyPendingScroll(ctx: WorkspaceContext): void {
 /** index.html:1682-1688 — 关闭覆盖视图：断 RO、解绑 cover 内事件、remove 触发容器自清 */
 export function closeDetail(ctx: WorkspaceContext): void {
   const s = getState(ctx);
+  disposeIntradayMini(ctx); // 释放覆盖视图内独立分时图的 WebGL context
   s.coverRO?.disconnect();
   s.coverRO = null;
   s.coverAbort?.abort();
@@ -455,10 +988,7 @@ function bindDataset(ctx: WorkspaceContext): void {
   // 逐笔涨跌口径：以上一笔成交价为基准，首行对昨收；涨 1 / 跌 -1 / 平 0
   const preClose = ds?.manifest.preClose ?? 0;
   const trades = (ds?.trades || []) as TradeTick[];
-  s.allTrades = trades.map((t, i, arr) => {
-    const diff = t.price - (i === 0 ? preClose : arr[i - 1].price);
-    return { ...t, trend: Math.abs(diff) < 1e-6 ? 0 : diff > 0 ? 1 : -1 };
-  });
+  s.allTrades = withTradeTrend(trades, preClose);
   s.allOrders = (ds?.orders || []) as unknown as OrderRecord[];
   const cnt = (a: string): number => s.allOrders.filter((o) => o.action === a).length;
   s.orderMix = ` · NEW ${cnt('NEW')} / FILL ${cnt('FILL')} / CANCEL ${cnt('CANCEL')}`;
@@ -478,12 +1008,14 @@ function placeTape(ctx: WorkspaceContext, mode: ChartMode): void {
   const home = el(ctx, 'tape-home');
   if (!card || !home) return;
   const intraday = mode === 'intraday';
+  // 历史分时「确有数据」时（含 K 线模式）才保留覆盖视图；读不到数据一律按常规逻辑收起
+  const histActive = hasHistoricalSeries(ctx, ctx.config().historicalIntradayDate);
   // 底部条可见性在任何 setSideExpanded / syncSideBars 之前确定，避免 footerH 时序偏差
   const btn = el(ctx, 'tape-detail');
   if (btn) btn.hidden = !intraday || !s.sideExpanded;
   // K 线模式关闭覆盖视图、回到 hidden 寄主，并复位十档展开状态
   if (!intraday) {
-    closeDetail(ctx);
+    if (!histActive) closeDetail(ctx);
     applySideExpanded(ctx, false);
   }
   // 挂载点经组件公开 API 收口，页面不再接触内部节点
@@ -526,7 +1058,8 @@ export function openDetail(ctx: WorkspaceContext): void {
     });
   coverRegion(ctx, 'cover-back')?.addEventListener('click', () => {
     closeDetail(ctx);
-    ctx.patchConfig({ tapePlacement: 'side' });
+    // 返回图表即取消选中的历史交易日，避免 histActive 守卫重新打开覆盖视图
+    ctx.patchConfig({ tapePlacement: 'side', historicalIntradayDate: null });
   }, { signal });
   const sc = coverRegion(ctx, 'cover-scroll');
   sc?.addEventListener('scroll', () => {
@@ -539,10 +1072,10 @@ export function openDetail(ctx: WorkspaceContext): void {
     // tapeScroll 作为初始输入由 syncDetail 统一消费。
   }, { signal });
 
-  applyDetailMode(ctx);
   // 宽度/高度变化导致栏数或每栏可见行数变化时重建，保留当前时间窗口起点
   s.coverRO = new ResizeObserver(() => {
-    if (!s.detailCover || s.detailSet === 'panorama') return;
+    // 全景 / 历史分时均为独立视图，不参与连续时间线的栏数 / 可见行数重算
+    if (!s.detailCover || s.detailSet === 'panorama' || s.detailSet === 'intraday') return;
     const n = detailGroupCount(s.detailCover.clientWidth);
     const L = Math.max(1, s.coverTapes[0]?.tape.visibleRows() || 20);
     if (n !== Number(s.detailCover.dataset.groups)) buildDetailGroups(ctx);
@@ -553,6 +1086,10 @@ export function openDetail(ctx: WorkspaceContext): void {
     }
   });
   s.coverRO.observe(cover);
+  // 共享上方工具栏按统一几何补差：所有 tab 的 .cover-bar 严格等高，
+  // 且列表视口恰好是整行高；历史逐笔再用 fitHistoricalTapeFoot 吸收自身余数。
+  fitCoverBar(ctx);
+  applyDetailMode(ctx);
 }
 
 
@@ -581,17 +1118,32 @@ export function syncDetail(ctx: WorkspaceContext): void {
   const expand = intraday && (config.tapeZoom > 0 || config.tapePlacement === 'detail');
   applySideExpanded(ctx, expand);
 
-  // tape-zoom / tape-placement 的覆盖视图开关 + tape-set 的数据集
-  const open = intraday && config.tapePlacement === 'detail';
-  if (open) {
-    if (s.detailCover) switchDetailSet(ctx, config.tapeSet);
-    else {
-      s.detailSet = config.tapeSet;
+  // 覆盖视图开关：仅当该交易日确有历史分时数据才进入「历史分时」界面；
+  // 读不到数据时组件内给一次「无数据」提示，不打开覆盖视图、不切到该 tab。
+  const requestedDate = config.historicalIntradayDate;
+  const histActive = hasHistoricalSeries(ctx, requestedDate);
+  if (requestedDate && !histActive) showNoDataHint(ctx, requestedDate);
+  else clearNoDataHint(ctx);
+  const effectiveSet = config.tapeSet === 'intraday' && !histActive ? 'trades' : config.tapeSet;
+  if (histActive) {
+    applyHistoricalViewState(ctx);
+    // 首次打开落在「历史分时」tab；已打开时保留用户当前 tab（不重复强制 set，避免 tab 切换被打回）。
+    if (!s.detailCover) {
+      s.detailSet = 'intraday';
       openDetail(ctx);
     }
   } else {
-    closeDetail(ctx);
-    s.detailSet = config.tapeSet;
+    const open = intraday && config.tapePlacement === 'detail';
+    if (open) {
+      if (s.detailCover) switchDetailSet(ctx, effectiveSet);
+      else {
+        s.detailSet = effectiveSet;
+        openDetail(ctx);
+      }
+    } else {
+      closeDetail(ctx);
+      s.detailSet = effectiveSet;
+    }
   }
 
   // 覆盖视图刚创建、数据已就绪时立即应用 tape-scroll（对应原 1884-1889）
@@ -661,5 +1213,53 @@ export function mountDetail(ctx: WorkspaceContext): () => void {
   return () => {
     s.controller.abort(); // 解绑全部持久事件
     closeDetail(ctx);     // 断 RO、解绑 cover 内事件、remove 覆盖视图
+  };
+}
+
+/* ------------------------------------------------------------------ 侧栏数据生命周期 */
+
+/**
+ * depth-book / trade-tape 单独启用时（不挂载 detail lifecycle）仍需的基础数据填充 + 数据事件。
+ * 刻意与 mountDetail 的覆盖视图 / 多栏时间线 / 历史分时 / 全景盘口状态机解耦：
+ * 只负责 #book.setData / #tape.setData 及它们的刷新事件，不重复 detail 生命周期的完整逻辑。
+ * 每 root 一份 AbortController；depth 与 tape 两个 lifecycle 共用时幂等去重，full 不重复绑定。
+ */
+const sideDataControllers = new WeakMap<HTMLElement, AbortController>();
+
+/** 现场从 ctx.data() / ctx.detailData() 取数，填充 #tape / #book（幂等，不改入参）。 */
+export function syncSideData(ctx: WorkspaceContext): void {
+  const ds = ctx.data();
+  const preClose = ds?.manifest?.preClose ?? 0;
+  tapeOf(ctx)?.setData(withTradeTrend((ds?.trades ?? []) as TradeTick[], preClose));
+  const snap = ctx.detailData().depth ?? null;
+  bookOf(ctx)?.setData?.(snap ? [snap] : null);
+}
+
+/** 绑定侧栏数据刷新事件并做一次初始填充；返回清理函数（abort + 注销幂等标记）。 */
+export function mountSideData(ctx: WorkspaceContext): () => void {
+  const root = ctx.root;
+  // 同一 root 已挂载（depth + tape 两个 lifecycle 共用）：返回空清理，避免 full 重复绑定。
+  if (sideDataControllers.has(root)) return () => {};
+  const controller = new AbortController();
+  sideDataControllers.set(root, controller);
+  const signal = controller.signal;
+  const book = bookOf(ctx);
+
+  // index.html:1246-1281 — 数据到达 / 盘口场景 / 盘口单位：只同步侧栏两个组件的数据。
+  ctx.chart.addEventListener('dataset-ready', () => syncSideData(ctx), { signal });
+  ctx.chart.addEventListener('depth-scenario-change', (e: Event) => {
+    const { depth } = (e as CustomEvent<{ depth: Record<string, unknown> | null }>).detail;
+    if (depth) book?.setData?.([depth]);
+  }, { signal });
+  ctx.chart.addEventListener('depth-unit-change', (e: Event) => {
+    const unit = (e as CustomEvent<{ unit: DepthUnit }>).detail.unit === 'amount' ? 'amount' : 'volume';
+    book?.setUnit?.(unit);
+  }, { signal });
+
+  syncSideData(ctx); // 初始填充（数据可能已在 mount 之前就绪）
+
+  return () => {
+    controller.abort();
+    sideDataControllers.delete(root);
   };
 }

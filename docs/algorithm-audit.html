@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>股票图表组件 · 算法口径核验报告（2026-11-18）</title>
+<title>股票图表组件 · 算法口径核验报告（2026-11-18，后续增补至 2026-11-22）</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   :root{--bg:#f7f8fa;--card:#fff;--ink:#1f2329;--muted:#6b7280;--line:#e3e6eb;--up:#e24b4a;--down:#1d9e75;--warn:#b0741a;--blue:#1b5fbf}
@@ -45,14 +45,15 @@
   <div class="sub">核验日期 2026-11-18 ｜ 范围：均线 / MACD / KDJ / 量比 / 副图 / 周期聚合 / 筹码峰 / 竞价 / 盘口 / A 股业务口径 ｜ 标的：600519.SH 示例数据（截至 2026-11-13，前复权）</div>
 
   <div class="card" style="border-left:5px solid var(--down);background:#f0faf5">
-    <strong><span class="tag t-ok">当前状态</span> 说明卡（截至 2026-11-21）</strong>
+    <strong><span class="tag t-ok">当前状态</span> 说明卡（截至 2026-11-22）</strong>
     <ul style="margin-bottom:0">
       <li>概念与术语以 <code>docs/00-概念总览与术语词典.md</code> 为准；本文为 2026-11-18 基于当时 <code>.js</code> 源码的算法口径核验记录，正文结论、偏差表、KPI 均为核验当时值（历史分节数字不动）。</li>
       <li><span class="tag t-ok">已修复</span> P0 三项（EMA 冷启动 / 量比口径 / 分钟 K 跨午休）与 P1 全部已于 2026-11-19 修复，详见下方绿色「2026-11-19 更新」状态卡（该卡「以本状态卡为准」的说明仍保留）。</li>
-      <li>现状：<code>src/**/*.ts</code> 66 个实现模块 + <code>global.d.ts</code>、0 显式 any；算法按概念收口 <code>src/algorithms/</code> 18 单元 + <code>ALGORITHMS</code>，架构收口 <code>src/architecture/</code> 6 文件；<code>scripts/shared.mjs</code> / <code>limit-rules.mjs</code> / <code>auction-match.mjs</code> 薄 re-export <code>dist/algorithms</code>；<code>src/events.ts</code> 统一 <code>emitEvent</code>。<strong>模块化阶段二已落地</strong>：12 模块 / 4 预设，<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据；组件内置 light/dark 双主题、<code>#btn-theme</code> 可点击切换。</li>
+      <li>现状：<code>src/**/*.ts</code> 67 个实现模块 + <code>global.d.ts</code>、0 显式 any；算法按概念收口 <code>src/algorithms/</code> 18 单元 + <code>ALGORITHMS</code>，架构收口 <code>src/architecture/</code> 6 文件；<code>scripts/shared.mjs</code> / <code>limit-rules.mjs</code> / <code>auction-match.mjs</code> 薄 re-export <code>dist/algorithms</code>；<code>src/events.ts</code> 统一 <code>emitEvent</code>。<strong>模块化阶段二已落地</strong>：13 个模块 / 4 预设，<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据；组件内置 light/dark 双主题、<code>#btn-theme</code> 可点击切换。</li>
       <li>数据：<strong>5 个落盘 JSON</strong>（bars 935 / intraday 267 / auction 90 / depth 1 快照 / orders 1315）+ manifest + SOURCES + raw；chips / intradayMulti / depthFull / depthScenarios / <strong>trades</strong> 5 个数据集由 <code>src/core/derive-dataset.ts</code> 运行时派生、不落盘（逐笔 <code>buildTradeSeries(intraday)</code> 生成 495 条）；派生后逐笔 495、委托 1710、多日 1210、筹码 150 档·120 日、全景 53 买/33 卖；<code>manifest.files/provenance</code> 5 键、<code>level2-licensed</code> 仅 <code>depth</code>/<code>orders</code> 2 个。</li>
-      <li>跨图闭合全部修复（<code>docs/00</code> §3.3 列 8 条关联、<code>verify.mjs</code> 含 6 条数值闭合断言）；当前验收 <code>check</code> 通过 / <code>test</code> 97/97 / <code>typecheck</code> 0 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 4 个 preset CDP 场景 0 JS 错误。</li>
+      <li>跨图闭合全部修复（<code>docs/00</code> §3.3 列 8 条关联、<code>verify.mjs</code> 含 6 条数值闭合断言）；当前验收 <code>check</code> 通过 / <code>test</code> 124/124 / <code>typecheck</code> 0 / <code>build</code> 81 JS + 82 声明 / <code>pack</code> 167 文件 · 259.9 kB / 4 个 preset CDP 场景 0 JS 错误。</li>
       <li><span class="tag t-ok">本轮·输入层精简</span> 2026-11-20 后续完成输入层清理：<code>manifest.files/provenance</code> 收敛为 5 键、<code>trades_20261113.json</code> 删除且逐笔运行时生成 495 条、需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个（<code>auction</code> 为 <code>l1-intraday-only</code>）；<code>bars_1d.json</code> 恢复东财 push2his 原生 11 列（13 字段、无 <code>limitState</code>/<code>source</code>），四态由 <code>manifest.demoPatterns</code>（4 项）记录、<code>deriveDataset()</code> 内存叠加，落盘不再注入改写 OHLC；落盘字段精简、运行时补齐累计量额/均价等、对外 <code>ChartDataset</code> 语义不变，<code>units</code> 5 组统一手/股/% 口径（手股换算统一 <code>LOT_SIZE</code>）、删除 11 个零消费者字段；<code>verify.mjs</code> 6 条指标基准经独立脚本重算（MACD 柱末 −1.927041、KDJ K末 51.533313 / D末 63.206664，另 3 条未变），分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持。</li>
+      <li><span class="tag t-ok">已落地</span> 模块化阶段二、历史分时（竞价 / 3 副图 / 多栏滚轮逐笔）、主题按钮均已落地；分层与单一真源已复核收敛。</li>
     </ul>
   </div>
 
@@ -208,7 +209,7 @@
     <p class="src">检索时点 2026-11-18；示例数据截止 2026-11-13。厂商公式以实现目标软件当前版本函数手册为准，软件升级可能调整函数行为。</p>
   </div>
 
-  <p class="src"><strong>处置结论（截至 2026-11-21）</strong>：示例数据输入层已清理为 <code>manifest.files/provenance</code> 5 键（<code>bars/intraday/auction/depth/orders</code>），<code>trades</code> 不再落盘、逐笔由 <code>buildTradeSeries(intraday)</code> 运行时生成 495 条，需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个；<code>bars</code> 恢复东财原生 11 列、四态改由 <code>manifest.demoPatterns</code> 内存叠加，落盘字段精简并由 <code>deriveDataset()</code> 运行时补齐、对外 <code>ChartDataset</code> 语义不变；<code>verify.mjs</code> 6 条指标基准已重算，<code>check</code> 通过 / <code>test</code> 97/97 / <code>build</code> 66 JS + 67 声明 / <code>pack</code> 137 文件 · 234.7 kB / 4 个 preset CDP 场景 0 JS 错误、分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持。<strong>模块化阶段二已落地</strong>：12 模块 / 4 预设，<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据；组件内置 light/dark 双主题、<code>#btn-theme</code> 可点击切换。本文 §一~§六偏差表、KPI 与各「当时」括注均为 2026-11-18 核验及历次增补的当时值，历史分节数字不动，当前状态以开头「当前状态说明卡」与本节为准。</p>
+  <p class="src"><strong>处置结论（截至 2026-11-22）</strong>：示例数据输入层已清理为 <code>manifest.files/provenance</code> 5 键（<code>bars/intraday/auction/depth/orders</code>），<code>trades</code> 不再落盘、逐笔由 <code>buildTradeSeries(intraday)</code> 运行时生成 495 条，需授权数据集由 3 个收敛为 <code>depth/orders</code> 2 个；<code>bars</code> 恢复东财原生 11 列、四态改由 <code>manifest.demoPatterns</code> 内存叠加，落盘字段精简并由 <code>deriveDataset()</code> 运行时补齐、对外 <code>ChartDataset</code> 语义不变；<code>verify.mjs</code> 6 条指标基准已重算，<code>check</code> 通过 / <code>test</code> 124/124 / <code>build</code> 81 JS + 82 声明 / <code>pack</code> 167 文件 · 259.9 kB / 4 个 preset CDP 场景 0 JS 错误、分时累计额 == 日 K、逐笔 242/242 分钟与分时相等、委托守恒、全景 53/33 档均保持。<strong>模块化阶段二已落地</strong>：13 个模块 / 4 预设，<code>MODULE_CATALOG</code> 为装载依据、<code>MODULE_REGISTRY</code> 为渲染元数据；组件内置 light/dark 双主题、<code>#btn-theme</code> 可点击切换。本文 §一~§六偏差表、KPI 与各「当时」括注均为 2026-11-18 核验及历次增补的当时值，历史分节数字不动，当前状态以开头「当前状态说明卡」与本节为准。</p>
 
   <div class="foot">
     <p>本报告为算法口径核验，未对项目源码做任何修改；数值均来自项目自带示例数据与独立复算，不代表任何真实交易日的实时行情。</p>

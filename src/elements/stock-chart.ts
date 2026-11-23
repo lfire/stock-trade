@@ -77,6 +77,8 @@ export class StockChart extends HTMLElement {
   declare scenarioPano: DepthBookSnapshot | null;
   declare paneBars: HTMLElement | null;
   declare theme: string | null;
+  /** 选中的历史分时交易日：仅作轻量状态记录，覆盖视图用独立实例承载，主图数据源不切换 */
+  declare historicalIntradayDate: string | null;
   declare sideSlot: HTMLElement | null | undefined;
   declare statsEl: HTMLElement | null | undefined;
   declare sideTradeEl: HTMLElement | null | undefined;
@@ -107,6 +109,7 @@ export class StockChart extends HTMLElement {
     this.scenarioPano = null;
     this.paneBars = null;
     this.theme = null;           // 当前主题名：'light' | 'dark' | 'custom'
+    this.historicalIntradayDate = null;
   }
 
   connectedCallback() {
@@ -448,6 +451,19 @@ export class StockChart extends HTMLElement {
       const anchor = main ? (e.clientX - rect.left - main.x) / main.w : 0.5;
       this.ctx!.zoomBy(e.deltaY > 0 ? 1.12 : 0.89, Math.min(1, Math.max(0, anchor)));
     }, { passive: false });
+    // 日 K 双击蜡烛：请求查看该交易日的历史分时（覆盖视图由独立实例承载，主图不切换数据源）
+    add(c, 'dblclick', (e: MouseEvent) => {
+      const ctx = this.ctx;
+      if (!ctx || ctx.mode !== 'candle' || ctx.period !== '1d') return;
+      const x = e.clientX - c.getBoundingClientRect().left;
+      const i = ctx.indexAtX(x);
+      if (i == null) return;
+      const tradeDate = ctx.getBars()[i]?.tradeDate;
+      if (!tradeDate) return;
+      emitEvent(this, CHART_EVENTS.HISTORICAL_INTRADAY_REQUEST, {
+        tradeDate, barIndex: i, source: 'candle-dblclick',
+      });
+    });
   }
 
   // ---- 公共 API ----
@@ -663,6 +679,11 @@ export class StockChart extends HTMLElement {
   setMode(mode: ChartMode) { this.ctx!.setMode(mode); }
   setPeriod(period: string) { this.ctx!.setPeriod(period); }
   getPeriod() { return this.ctx!.period; }
+  /** 选中的历史分时交易日：只记录状态并请求重绘，主图数据源不切换（覆盖视图独立实例承载）。 */
+  setHistoricalIntradayDate(date: string | null) {
+    this.historicalIntradayDate = date;
+    this.ctx?.requestRender();
+  }
   setChipMode(mode: ChipMode) { this.ctx!.setChipMode(mode); }
   setAuctionEnabled(on: boolean) { this.ctx!.setAuctionEnabled(on); }
   setChipsEnabled(on: boolean) { this.ctx!.setChipsEnabled(on); }

@@ -28,6 +28,11 @@ export { loadDataset } from './core/data-store';
 export { parseWorkspaceConfig } from './workspace/url-config';
 export { WORKSPACE_EVENTS, DEFAULT_WORKSPACE_CONFIG } from './workspace/types';
 export type { WorkspaceConfig, WorkspaceInputs, WorkspaceModule, WorkspaceContext, DetailSet, TapePlacement } from './workspace/types';
+/** 模块化装载扩展点：注册自定义模块 / CSS 片段，并读取模块目录与模板构造器 */
+export { MODULE_CATALOG, registerModule } from './workspace/module-catalog';
+export { buildWorkspaceTemplate, registerCssSegment, registerTemplateSlice } from './workspace/template';
+/** 生命周期扩展点：让新模块声明的任意 lifecycle 值都能挂载 hooks */
+export { registerLifecycle } from './elements/stock-workspace';
 export * from './pure';
 /** 对外公开的全部数据类型由 tsc 自动生成到 dist/types.d.ts，并由根入口重导出 */
 export type * from './types';

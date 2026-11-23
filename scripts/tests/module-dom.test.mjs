@@ -22,12 +22,12 @@ test('full 预设：模板/CSS 与 WORKSPACE_TEMPLATE / WORKSPACE_CSS 逐字符�
   assert.equal(buildWorkspaceCSS(full()), WORKSPACE_CSS);
 });
 
-test('candle 预设模板：无 auction-pane / depth-book / #tape-home，有 chip-pane / price-pane / indicator-pane', () => {
-  const tpl = buildWorkspaceTemplate(resolveModules({ preset: 'candle' }));
-  for (const absent of ['auction-pane', 'depth-book', 'id="tape-home"']) {
+test('candle-full 预设模板：无 auction-pane / depth-book，有 chip/price/indicator 与历史分时入口', () => {
+  const tpl = buildWorkspaceTemplate(resolveModules({ preset: 'candle-full' }));
+  for (const absent of ['auction-pane', 'depth-book']) {
     assert.ok(!tpl.includes(absent), `candle 模板仍含 ${absent}`);
   }
-  for (const present of ['chip-pane', 'price-pane', 'indicator-pane']) {
+  for (const present of ['chip-pane', 'price-pane', 'indicator-pane', 'sel-historical-intraday']) {
     assert.ok(tpl.includes(present), `candle 模板缺少 ${present}`);
   }
 });

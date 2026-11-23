@@ -32,7 +32,7 @@ const derived = deriveDataset(baseDataset);
 {
   const full = deriveDataset(baseDataset, { preset: 'full' });
   const minimal = deriveDataset(baseDataset, { preset: 'minimal' });
-  const candle = deriveDataset(baseDataset, { preset: 'candle' });
+  const candle = deriveDataset(baseDataset, { preset: 'candle-full' });
   ok(JSON.stringify(full) === JSON.stringify(derived),
     'preset:full 与默认全开不一致（模块化改造破坏向后兼容）');
   ok(minimal.bars?.length === bars.length && minimal.intraday?.length === intra.length
@@ -40,11 +40,12 @@ const derived = deriveDataset(baseDataset);
   for (const k of ['auction', 'trades', 'orders', 'depth', 'depthFull', 'depthScenarios', 'chips']) {
     ok(minimal[k] === undefined, `minimal 仍派生了 ${k}（数据未按需裁剪）`);
   }
-  ok(!!candle.chips && candle.trades === undefined && candle.orders === undefined,
-    'candle 预设的数据裁剪不符合模块依赖');
-  ok(Object.keys(MODULE_CATALOG).length === 12 && Object.keys(MODULE_PRESETS).length === 4,
+  ok(!!candle.chips && !!candle.intradayMulti && !!candle.historicalIntraday
+    && candle.auction === undefined,
+    'candle 预设应派生 K 线 + 历史分时索引，且不派生竞价');
+  ok(Object.keys(MODULE_CATALOG).length === 13 && Object.keys(MODULE_PRESETS).length === 5,
     '模块目录或预设数量异常');
-  ok(resolveModules(undefined).length === 12
+  ok(resolveModules(undefined).length === 13
     && requiredDataFor(['core', 'chip']).includes('chips'),
   '模块目录 / 数据依赖闭包异常');
 }
@@ -753,6 +754,38 @@ ok(html.includes('height: var(--sw-bar-h, 24px)') && tapeSrc.includes('var(--sw-
     'minimal 模板未按模块裁剪');
   ok(!buildWorkspaceCSS(minimalMods).includes('.pano-row'),
     'minimal CSS 仍含全景盘口规则');
+  // 历史分时：不展示来源/示意说明；无数据前置拦截 + 组件内轻提示
+  const histSrc = readFileSync(path.join(root, 'src/workspace/detail.ts'), 'utf8');
+  ok(!histSrc.includes('hist-src') && !histSrc.includes('HIST_SOURCE_LABEL')
+    && histSrc.includes('hasHistoricalSeries') && histSrc.includes('showNoDataHint')
+    && tplSrc.includes('hist-no-data'),
+  '历史分时仍展示来源说明，或缺少无数据前置拦截与 3 秒浮层提示');
+  ok(histSrc.includes('mini.setTheme(theme)') && histSrc.includes('miniTheme'),
+    '历史分时 mini 实例缺少主题下沉（暗色下 WebGL 色板会停留在浅色）');
+  ok(!tplSrc.includes('hist-tape-head') && !histSrc.includes('逐笔明细 · 多栏连续时间线'),
+    '历史分时展开明细仍保留「逐笔明细 · 多栏连续时间线」提示栏');
+  ok(histSrc.includes('const measured') && histSrc.includes('updateHistoricalSpacer')
+    && histSrc.includes('visibleRows()'),
+  '多栏逐笔缺少按视口校准每栏行数，最后一行会被裁成半截');
+  ok(histSrc.includes('fitHistoricalTapeFoot') && histSrc.includes('paddingBottom'),
+    '多栏逐笔未用底部计数条吸收视口余数，列表底部会留白或行高被改动');
+  ok(histSrc.includes('fitCoverBar') && histSrc.includes('TAPE_CHROME_H')
+    && tplSrc.includes('--sw-bar-h: 24px') && tplSrc.includes('height: 26px'),
+  '当日 / 历史逐笔的共享工具栏与组标题/表头未统一等高');
+  ok(histSrc.includes('fitPanoramaViewport') && histSrc.includes('.pano-mid'),
+    '全景盘口缺少视口余数吸收，底部会残留半行/留白');
+  const tapeSrc = readFileSync(path.join(root, 'src/elements/trade-tape.ts'), 'utf8');
+  ok(histSrc.includes('fitHistoricalSideTape') && histSrc.includes('sideRO')
+    && tapeSrc.includes('--sw-view-extra'),
+  '历史分时收起态右侧逐笔栏缺少视口余数吸收，底部会残留半行');
+  ok(histSrc.includes('applyBalancedPadding') && histSrc.includes('paddingTop')
+    && (histSrc.match(/applyBalancedPadding\(/g) || []).length >= 6,
+  '视口余数只补 padding-bottom，会让底栏/工具栏文字不垂直居中');
+  // 历史分时多栏逐笔：滚轮驱动共享起始行，不再用翻页按钮
+  const dtlSrc = readFileSync(path.join(root, 'src/workspace/detail.ts'), 'utf8');
+  ok(tplSrc.includes('hist-tape-scroll') && tplSrc.includes('pointer-events: none')
+    && dtlSrc.includes('scrollTop / DETAIL_ROW_H') && !dtlSrc.includes('上一屏'),
+  '历史分时多栏展开缺少滚轮驱动（或仍保留翻页按钮）');
 }
 
 // 5. 跨框架适配层契约：具名子路径 exports / 7 个框架文件 / JSX 精确类型 / 根入口导出

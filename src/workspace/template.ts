@@ -7,9 +7,10 @@
  *
  * 阶段二（DOM/CSS 按需）：CSS 分段源 CSS_SOURCE 用顶格的 @module:key 标记注释
  * 切成连续片段，buildWorkspaceCSS() 按启用模块的 cssKeys 拼接片段并过滤标记行；
- * 模板拆成有序切片 TEMPLATE_SLICES，每片声明模板键 keys 与可选的具体模块 id moduleIds，
- * buildWorkspaceTemplate() 用「启用模块 templateKeys 并集」+ moduleIds 决定切片是否输出。
- * 装载依据全部来自 MODULE_CATALOG 的 templateKeys / cssKeys / lifecycle。
+ * 模板拆成有序切片 TEMPLATE_SLICES，每片声明 id + owners（拥有它的模块 id）+ 可选 always，
+ * templateSliceEnabled() 用「owners 命中」或「启用模块 templateSlices 显式声明该 id」决定是否输出；
+ * registerTemplateSlice() 让新模块登记独占 DOM 切片，无需改内置白名单。
+ * 装载依据全部来自 MODULE_CATALOG 的 templateSlices / cssKeys / lifecycle（templateKeys 兼容保留）。
  * full 预设下两者的输出与 WORKSPACE_CSS / WORKSPACE_TEMPLATE 常量逐字符一致（向后兼容）。
  */
 import { MODULE_CATALOG, resolveModules } from './module-catalog';
@@ -123,6 +124,7 @@ const CSS_SOURCE: string = `
          写到 <stock-workspace> 根元素的 inline style（不在 :root / html[data-theme] 定义）；
          下面每个 var() 的浅色值是静态兜底，运行时由组件内部主题覆盖。 */
       .chart-card {
+        position: relative;   /* 为 .hist-no-data 浮层提供定位上下文，不改变文档流 */
         border: 1px solid var(--sw-line, #ECEEF1);
         border-radius: 10px;
         overflow: hidden;
@@ -853,6 +855,8 @@ const CSS_SOURCE: string = `
       }
       .detail-cover .group-head {
         flex: 0 0 auto;
+        box-sizing: border-box;
+        height: 26px;          /* 与历史逐笔共用同一组标题高度，避免小数差 */
         padding: 5px 6px;
         background: var(--sw-panel, #F7F8FA);
         border-bottom: 1px solid var(--sw-line, #ECEEF1);
@@ -867,6 +871,8 @@ const CSS_SOURCE: string = `
         flex: 1 1 0%;
         min-height: 0;
         height: auto;
+        /* 两个逐笔视图共用同一表头高度（LAYOUT.barH），不继承主图侧栏的均分余数 */
+        --sw-bar-h: 24px;
       }
 /* @module:depthBook */
       .card {
@@ -897,6 +903,171 @@ const CSS_SOURCE: string = `
       }
       depth-book::-webkit-scrollbar {
         display: none;
+      }
+/* @module:historicalIntraday */
+      /* 历史分时覆盖视图：与逐笔明细 / 全景盘口三态互斥 */
+      .detail-cover .cover-intraday {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        display: none;
+        flex-direction: column;
+        background: var(--sw-bg, #FFFFFF);
+      }
+      .cover-body.intraday-mode .cover-intraday {
+        display: flex;
+      }
+      .cover-body.intraday-mode .cover-scroll,
+      .cover-body.intraday-mode .cover-groups,
+      .cover-body.intraday-mode .cover-panorama {
+        display: none;
+      }
+      .cover-body:not(.intraday-mode) .cover-intraday {
+        display: none;
+      }
+      /* 历史分时视图顶部：交易日 / 数据来源标注条 */
+      /* 历史分时：只保留功能按钮，不展示来源 / 示意说明 */
+      .detail-cover .hist-toolbar {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 5px 10px;
+        border-bottom: 1px solid var(--sw-line, #ECEEF1);
+        background: var(--sw-bg, #FFFFFF);
+      }
+      .detail-cover .hist-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .detail-cover .hist-empty {
+        padding: 20px;
+        color: var(--sw-muted, #6B7280);
+        font: 12px/1.6 system-ui, sans-serif;
+      }
+      /* 读不到历史分时数据时：中央浮层卡片，3 秒自动消失，不占文档流、不挤动界面 */
+      .hist-no-data {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 30;
+        padding: 10px 18px;
+        border: 1px solid var(--sw-line, #ECEEF1);
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--sw-up, #E24B4A) 10%, var(--sw-bg, #FFFFFF));
+        color: var(--sw-up, #E24B4A);
+        box-shadow: 0 4px 18px rgba(31, 35, 41, .16);
+        font: 12px/1.5 system-ui, sans-serif;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      .detail-cover .hist-actions button {
+        padding: 3px 9px;
+        border: 1px solid var(--sw-line, #E3E6EB);
+        border-radius: 4px;
+        background: var(--sw-panel, #F7F8FA);
+        color: var(--sw-text, #1F2329);
+        font: 11px/1.4 system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .detail-cover .hist-actions button.active {
+        border-color: var(--sw-link, #185FA5);
+        color: var(--sw-link, #185FA5);
+      }
+      /* 内容区：分时图全宽，展开态由浮层覆盖右侧 45%，视觉上等价于「侧栏放大」 */
+      .detail-cover .hist-body {
+        position: relative;
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 420px;
+        min-width: 0;
+      }
+      .cover-intraday .hist-body > stock-chart {
+        display: block;
+        flex: 1 1 auto;
+        width: 100%;
+        min-width: 0;
+        min-height: 420px;
+        height: 100%;
+        border: 0;
+        border-radius: 0;
+      }
+      /* 展开态：多栏逐笔占满整个内容区，与当日「打开逐笔明细」的全宽连续时间线一致 */
+      .detail-cover .hist-tape-panel {
+        display: none;
+        position: absolute;
+        inset: 0;
+        /* 需高于 mini 内部 #pane-bars(z-index:5) 与 overlay，否则副图信息栏会透出 */
+        z-index: 10;
+        flex-direction: column;
+        background: var(--sw-bg, #FFFFFF);
+      }
+      .cover-intraday.hist-tape-expanded .hist-tape-panel {
+        display: flex;
+      }
+      /* 内容区：透明滚动层在下、多栏 grid 在上，滚轮穿透到滚动层驱动全栏同步换段 */
+      .detail-cover .hist-tape-view {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+      .detail-cover .hist-tape-scroll {
+        position: absolute;
+        inset: 0;
+        overflow-y: auto;
+        z-index: 1;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+      }
+      .detail-cover .hist-tape-scroll::-webkit-scrollbar { display: none; }
+      .detail-cover .hist-tape-spacer { width: 1px; }
+      .detail-cover .hist-tape-grid {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: grid;
+        gap: 1px;
+        background: var(--sw-line, #ECEEF1);
+        pointer-events: none;
+      }
+      .detail-cover .hist-tape-grid .group {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        background: var(--sw-bg, #FFFFFF);
+      }
+      .detail-cover .hist-tape-grid trade-tape {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: block;
+      }
+      .detail-cover .hist-tape-foot {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-top: 1px solid var(--sw-line, #ECEEF1);
+        background: var(--sw-panel, #F7F8FA);
+        font: 11px/1.4 system-ui, sans-serif;
+        color: var(--sw-muted, #6B7280);
+      }
+      .detail-cover .hist-tape-info { margin-left: auto; }
+      .detail-cover .hist-tape-foot span:last-child {
+        padding: 2px 8px;
+        border: 1px solid var(--sw-line, #E3E6EB);
+        border-radius: 4px;
+        background: var(--sw-bg, #FFFFFF);
+      }
+      /* 逐笔明细侧栏（替代十档盘口）：占满右列，不显示档位表 */
+      .cover-intraday trade-tape[slot="side"] {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
       }
 `;
 
@@ -972,20 +1143,28 @@ export const WORKSPACE_CSS: string = buildWorkspaceCSS(fullModules);
 
 /* ------------------------------------------------------------------ 模板切片 */
 
-interface TemplateSlice {
+/**
+ * 模块级归属的模板切片：
+ * - id：切片唯一标识，供启用模块的 templateSlices 显式声明、以及登记切片的 after 定位；
+ * - owners：拥有该切片的模块 id（requireAny：任一启用即输出）；
+ * - always：core 骨架恒输出（开/闭标签等不依赖具体功能模块）；
+ * - after：（登记项）指定插入到某内置切片 id 之后；未指定时统一插到 `</stock-chart>` 切片之前。
+ * 逐字取自原 WORKSPACE_TEMPLATE；full 时全部输出 → 拼接即原文（视觉零变化）。
+ */
+export interface TemplateSlice {
+  id: string;
   text: string;
-  /** 对应的模板键（requireAll：全部命中「启用模块 templateKeys 并集」才输出） */
-  keys: readonly string[];
-  /** 仅能由具体内置模块产生的切片：声明具体模块 id（requireAny：任一启用才输出） */
-  moduleIds?: readonly string[];
+  owners: readonly string[];
+  always?: boolean;
+  after?: string;
 }
 
 /** 有序切片：逐字取自原 WORKSPACE_TEMPLATE，full 时全部启用 → 拼接即原文。 */
 const TEMPLATE_SLICES: readonly TemplateSlice[] = [
-  { text: `
+  { id: 'shell', text: `
       <div class="chart-card">
-`, keys: ['shell'] },
-  { text: `        <div class="chart-header">
+`, owners: [], always: true },
+  { id: 'header', text: `        <div class="chart-header">
           <!-- 第一行：股票标识（强调、置顶）在左，图表功能控件在右 -->
           <div class="hdr-row">
             <div class="hdr-left">
@@ -998,13 +1177,16 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
                 ><span id="q-pct">—</span>
               </div>
             </div>
-`, keys: ['header'] },
-  { text: `            <div class="chart-tools">
+`, owners: ['header'] },
+  // 原 header+toolbar 大切片按功能域拆成 6 段（顺序拼接逐字符 = 原文）：
+  // toolbar 外壳 + 共用控件 / 分时专属 / K 线周期筹码均线 / 历史分时入口 / ma-panel 收尾。
+  { id: 'toolbar', text: `            <div class="chart-tools">
               <button id="btn-intraday" class="active">分时</button>
               <button id="btn-candle">K 线</button>
               <span class="sep"></span>
               <!-- 分时专属：多日分时段控件（tab 式即时切换）+ 竞价开关（多日时禁用并说明原因） -->
-              <span class="tool-group" id="intraday-only">
+`, owners: ['toolbar'] },
+  { id: 'intraday-tools', text: `              <span class="tool-group" id="intraday-only">
                 <label style="color: var(--sw-muted, #6B7280)">多日</label>
                 <span
                   class="seg"
@@ -1031,7 +1213,8 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
                   </button></span
                 >
               </span>
-              <!-- K 线专属：周期 / 筹码峰 / 均线设置 -->
+`, owners: ['price-intraday'] },
+  { id: 'candle-tools', text: `              <!-- K 线专属：周期 / 筹码峰 / 均线设置 -->
               <span class="tool-group" id="candle-only" hidden>
                 <label style="color: var(--sw-muted, #6B7280)">周期</label>
                 <select id="sel-period"></select>
@@ -1039,7 +1222,12 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
                 <button id="btn-chips" class="active">筹码峰：开</button>
                 <span class="sep"></span>
                 <button id="btn-ma">均线设置</button>
-                <div id="ma-panel" style="display: none">
+                <span class="sep"></span>
+                <label style="color: var(--sw-muted, #6B7280)">历史分时</label>
+`, owners: ['price-candle'] },
+  { id: 'hist-intraday-tools', text: `                <select id="sel-historical-intraday"></select>
+`, owners: ['historical-intraday'] },
+  { id: 'candle-tools-tail', text: `                <div id="ma-panel" style="display: none">
                   <h3>
                     K 线均线设置
                     <button id="ma-close" type="button">关闭</button>
@@ -1076,7 +1264,8 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
                   </div>
                 </div>
               </span>
-              <span class="sep"></span>
+`, owners: ['price-candle'] },
+  { id: 'toolbar-tail', text: `              <span class="sep"></span>
               <!-- 两种模式共用 -->
               <label style="color: var(--sw-muted, #6B7280)">副图数量</label>
               <select id="sel-subplots">
@@ -1087,8 +1276,8 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
               <span class="sep"></span>
               <button id="btn-theme" type="button" class="theme-toggle" aria-label="切换明暗主题" title="切换明暗主题">暗色</button>
             </div>
-`, keys: ['header', 'toolbar'] },
-  { text: `          </div>
+`, owners: ['toolbar'] },
+  { id: 'header-tail', text: `          </div>
           <!-- 第二行：左侧模式/日期/MA 实时值，右侧四色图例 + 固定槽位指标 -->
           <div class="hdr-row">
             <div class="context">
@@ -1106,34 +1295,34 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
             </div>
           </div>
         </div>
-`, keys: ['header'] },
-  { text: `        <stock-chart id="chart" mode="intraday">
-`, keys: ['chart'] },
-  { text: `          <price-pane height="50">
+`, owners: ['header'] },
+  { id: 'chart', text: `        <stock-chart id="chart" mode="intraday">
+`, owners: [], always: true },
+  { id: 'panes', text: `          <price-pane height="50">
             <!-- 不写死颜色：由组件按实例色板依次分配（橙 / 蓝 / 紫），换肤自动跟随 -->
             <ma-line period="5"></ma-line>
             <ma-line period="20"></ma-line>
             <ma-line period="60"></ma-line>
           </price-pane>
-`, keys: ['panes'] },
-  { text: `          <indicator-pane indicator="VOL" height="12"></indicator-pane>
+`, owners: ['core'] },
+  { id: 'indicator', text: `          <indicator-pane indicator="VOL" height="12"></indicator-pane>
           <indicator-pane indicator="AMOUNT" height="12"></indicator-pane>
           <indicator-pane
             id="pane-third"
             indicator="MACD"
             height="12"
           ></indicator-pane>
-`, keys: ['panes'], moduleIds: ['indicator'] },
-  { text: `          <auction-pane width="150"></auction-pane>
-`, keys: ['panes'], moduleIds: ['auction'] },
-  { text: `          <chip-pane dock="right" width="210" mode="histogram"></chip-pane>
-`, keys: ['panes'], moduleIds: ['chip'] },
-  { text: `          <depth-book slot="side" id="book" width="210"></depth-book>
-`, keys: ['tapeCard'], moduleIds: ['depth-book'] },
-  { text: `        </stock-chart>
+`, owners: ['indicator'] },
+  { id: 'auction', text: `          <auction-pane width="150"></auction-pane>
+`, owners: ['auction'] },
+  { id: 'chip', text: `          <chip-pane dock="right" width="210" mode="histogram"></chip-pane>
+`, owners: ['chip'] },
+  { id: 'depth-book', text: `          <depth-book slot="side" id="book" width="210"></depth-book>
+`, owners: ['depth-book'] },
+  { id: 'shell-close', text: `        </stock-chart>
       </div>
-`, keys: ['shell'] },
-  { text: `
+`, owners: [], always: true },
+  { id: 'tapeCard', text: `
       <!-- 交易明细：分时模式挂进图表右列（十档盘口下方）；K 线模式留在此隐藏寄主中不展示 -->
       <div id="tape-home" hidden>
         <div class="card" id="tape-card">
@@ -1147,32 +1336,64 @@ const TEMPLATE_SLICES: readonly TemplateSlice[] = [
           </div>
         </div>
       </div>
-`, keys: ['tapeCard'], moduleIds: ['trade-tape', 'detail-cover'] },
+`, owners: ['trade-tape', 'detail-cover'] },
 ];
 
-/** 切片是否输出：模板键全部命中「启用模块 templateKeys 并集」，且具体 id（若有）任一启用。 */
-function templateSliceEnabled(
-  slice: TemplateSlice,
-  enabledKeys: ReadonlySet<string>,
-  modules: ReadonlySet<string>,
-): boolean {
-  if (!slice.keys.every((key) => enabledKeys.has(key))) return false;
-  if (slice.moduleIds && !slice.moduleIds.some((id) => modules.has(id))) return false;
-  return true;
+/**
+ * 自定义模板切片登记表：registerTemplateSlice() 写入，buildWorkspaceTemplate() 合并。
+ * 新模块登记独占 DOM 切片、并在其 WorkspaceModuleDef.templateSlices 显式声明该 id 后，
+ * 显式启用该模块即可产出该 DOM，无需改动内置切片的 owners 白名单。
+ */
+const REGISTERED_TEMPLATE_SLICES: TemplateSlice[] = [];
+
+/** 登记自定义模板切片（单参数对象）：id / owners / text / 可选 after 插入位置。 */
+export function registerTemplateSlice(slice: TemplateSlice): void {
+  REGISTERED_TEMPLATE_SLICES.push(slice);
 }
 
-/** 按启用模块的 templateKeys 并集 + 具体模块 id 筛选切片，拼接 DOM 模板。 */
-export function buildWorkspaceTemplate(moduleIds: string[]): string {
-  const enabledKeys = new Set<string>();
-  const modules = new Set(moduleIds);
-  for (const id of moduleIds) {
-    const def = MODULE_CATALOG[id];
-    if (!def) continue;
-    for (const key of def.templateKeys) enabledKeys.add(key);
+/**
+ * 合并内置切片 + 已登记切片：按登记顺序插入。
+ * - 无 after：统一插到含 `</stock-chart>` 的 shell-close 切片之前；
+ * - 有 after：插到指定切片 id 之后（找不到则追加末尾）。
+ * 登记项仍受 templateSliceEnabled 过滤，故 full（不含新模块）输出不受登记影响 → 恒等保持。
+ */
+function orderedSlices(): readonly TemplateSlice[] {
+  if (REGISTERED_TEMPLATE_SLICES.length === 0) return TEMPLATE_SLICES;
+  const list: TemplateSlice[] = [...TEMPLATE_SLICES];
+  for (const reg of REGISTERED_TEMPLATE_SLICES) {
+    const anchor = reg.after ?? 'shell-close';
+    const idx = list.findIndex((s) => s.id === anchor);
+    // after：插到锚点之后；默认（shell-close）：插到锚点之前。
+    const at = idx >= 0 ? idx + (reg.after ? 1 : 0) : list.length;
+    list.splice(at, 0, reg);
   }
+  return list;
+}
+
+/**
+ * 切片是否输出（模块级归属、数据驱动）：
+ * - always：core 骨架恒输出；
+ * - owners 中任一模块 id 被启用；
+ * - 任一启用模块在其 templateSlices 中显式声明了该切片 id（新模块扩展点）。
+ * templateKeys 为向后兼容的共享键字段，不再参与判定（避免共享键并集把别的模块 DOM 带出）。
+ */
+export function templateSliceEnabled(
+  slice: TemplateSlice,
+  enabled: readonly string[],
+): boolean {
+  if (slice.always) return true;
+  if (slice.owners.some((id) => enabled.includes(id))) return true;
+  for (const id of enabled) {
+    if (MODULE_CATALOG[id]?.templateSlices?.includes(slice.id)) return true;
+  }
+  return false;
+}
+
+/** 按启用模块归属筛选切片（内置 + 已登记），拼接 DOM 模板。纯函数，不改入参数组。 */
+export function buildWorkspaceTemplate(moduleIds: string[]): string {
   let html = '';
-  for (const slice of TEMPLATE_SLICES) {
-    if (templateSliceEnabled(slice, enabledKeys, modules)) html += slice.text;
+  for (const slice of orderedSlices()) {
+    if (templateSliceEnabled(slice, moduleIds)) html += slice.text;
   }
   return html;
 }

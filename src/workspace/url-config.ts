@@ -17,7 +17,7 @@ const oneOf = <T extends string>(v: string | null, allowed: readonly T[], fallba
   (v && allowed.includes(v as T) ? v as T : fallback);
 
 /** preset 白名单（与 module-catalog.ts 的 WorkspacePreset 一致）。 */
-const PRESET_VALUES: readonly WorkspacePreset[] = ['full', 'intraday', 'candle', 'minimal'];
+const PRESET_VALUES: readonly WorkspacePreset[] = ['full', 'intraday', 'candle', 'candle-full', 'minimal'];
 
 /** 解析 `?ma=5,20,60` 之类为 MAConfig[]（不依赖 PALETTE，颜色由组件默认色板补齐） */
 function parseMA(raw: string | null): MAConfig[] | undefined {
@@ -34,7 +34,7 @@ export function parseWorkspaceConfig(params: URLSearchParams): Partial<Workspace
   const get = (k: string) => params.get(k);
 
   // 模块化装载：?modules=core,price-intraday（逗号分隔，去空格、过滤空串）
-  // 与 ?preset=full|intraday|candle|minimal（白名单之外回退 full）。
+  // 与 ?preset=full|intraday|candle|candle-full|minimal（白名单之外回退 full）。
   // ?modules= 空串 / 全空白时不写 modules 键（等价于「未提供」），避免空数组吞掉 preset。
   if (has('modules')) {
     const mods = (get('modules') || '').split(',').map((s) => s.trim()).filter((s) => s.length > 0);
@@ -63,8 +63,17 @@ export function parseWorkspaceConfig(params: URLSearchParams): Partial<Workspace
     // tapePlacement='detail'（显式 ?tape-side=side 可覆盖）。
     if (out.tapeZoom > 0 && !has('tape-side')) out.tapePlacement = 'detail';
   }
-  if (has('tape-set')) out.tapeSet = oneOf<DetailSet>(get('tape-set'), ['trades', 'orders', 'panorama'], 'trades');
+  if (has('tape-set')) out.tapeSet = oneOf<DetailSet>(get('tape-set'), ['trades', 'orders', 'panorama', 'intraday'], 'trades');
   if (has('tape-scroll')) out.tapeScroll = Math.max(0, int(get('tape-scroll'), 0));
+  // ?historical-intraday=YYYY-MM-DD：选中的历史交易日，独立于 manifest.tradeDate；
+  // 仅做格式正则校验，非法值直接忽略（不写入该键，保留组件默认值 null）。
+  if (has('historical-intraday')) {
+    const v = get('historical-intraday') || '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) out.historicalIntradayDate = v;
+  }
+  if (has('historical-auction')) out.historicalAuctionEnabled = get('historical-auction') !== 'off';
+  if (has('historical-tape-expanded')) out.historicalTapeExpanded = get('historical-tape-expanded') === '1';
+
   if (has('crosshair')) out.crosshair = int(get('crosshair'), 0);
   if (has('pointer')) {
     const [x, y] = (get('pointer') || '').split(',').map(Number);

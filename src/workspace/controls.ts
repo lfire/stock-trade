@@ -21,6 +21,7 @@ import type { WorkspaceContext } from './types';
 import { resolveWorkspaceTheme } from './theme';
 import { PALETTE, type ChartMode, type DepthUnit, type MAConfig } from '../types';
 import { PERIODS } from '../core/bar-aggregator';
+import { CHART_EVENTS } from '../events';
 
 /** 在 light DOM 根范围内按 id 取元素（替代页面级 document.getElementById） */
 function el<T extends Element = HTMLElement>(ctx: WorkspaceContext, id: string): T | null {
@@ -104,6 +105,21 @@ function applyIntradayDays(ctx: WorkspaceContext, days: number): void {
 }
 
 /**
+ * 历史分时日期下拉：选项来自 dataset.historicalIntraday 的键（按日期倒序，近 5 日），
+ * 选中值按 config.historicalIntradayDate 回填；数据未到达时下拉为空且禁用，不抛错。
+ */
+function syncHistoricalIntraday(ctx: WorkspaceContext): void {
+  const sel = el<HTMLSelectElement>(ctx, 'sel-historical-intraday');
+  if (!sel) return;
+  const hist = ctx.data()?.historicalIntraday;
+  const dates = hist ? Object.keys(hist).sort().reverse().slice(0, 5) : [];
+  sel.innerHTML = dates.map((d) => `<option value="${d}">${d}</option>`).join('');
+  sel.disabled = dates.length === 0;
+  const selected = ctx.config().historicalIntradayDate;
+  sel.value = selected && dates.includes(selected) ? selected : '';
+}
+
+/**
  * 从 ctx.config() 重渲染所有控件状态：
  * active class / hidden / select value / 均线面板。
  * 对应原 syncToggles(1720-1729) + syncAuctionButton + syncDaysSeg + 各下拉初值。
@@ -150,6 +166,8 @@ export function syncControls(ctx: WorkspaceContext): void {
   const selDepthUnit = el<HTMLSelectElement>(ctx, 'sel-depth-unit');
   if (selDepthUnit) selDepthUnit.value = config.depthUnit === 'amount' ? 'amount' : 'volume';
 
+  syncHistoricalIntraday(ctx);
+
   const maPanel = el(ctx, 'ma-panel');
   if (maPanel) maPanel.style.display = config.maPanelOpen ? 'block' : 'none';
   if (!isSkip(ctx)) renderMAPanel(ctx);
@@ -170,6 +188,34 @@ export function syncControls(ctx: WorkspaceContext): void {
 export function mountControls(ctx: WorkspaceContext): () => void {
   const controller = new AbortController();
   const signal = controller.signal;
+
+  // ---- 历史分时（日 K 双击蜡烛 / 工具栏日期下拉）----
+  // 双击与下拉共用同一配置变更：选中交易日 + 明细切到分时集 + 明细停放 detail。
+  const applyHistoricalIntraday = (tradeDate: string): void => {
+    ctx.patchConfig({
+      historicalIntradayDate: tradeDate, tapeSet: 'intraday', tapePlacement: 'detail',
+    });
+  };
+  // 事件桥接：stock-chart 双击蜡烛派发，bubbles + composed 冒泡到 workspace 根
+  ctx.root.addEventListener(
+    CHART_EVENTS.HISTORICAL_INTRADAY_REQUEST,
+    (e: Event) => {
+      const tradeDate = (e as CustomEvent<{ tradeDate: string }>).detail?.tradeDate;
+      if (tradeDate) applyHistoricalIntraday(tradeDate);
+    },
+    { signal },
+  );
+  const selHist = el<HTMLSelectElement>(ctx, 'sel-historical-intraday');
+  if (selHist) {
+    selHist.addEventListener(
+      'change',
+      (e: Event) => {
+        const tradeDate = (e.target as HTMLSelectElement).value;
+        if (tradeDate) applyHistoricalIntraday(tradeDate);
+      },
+      { signal },
+    );
+  }
 
   // ---- index.html:1221-1229 selPeriod ----
   const selPeriod = el<HTMLSelectElement>(ctx, 'sel-period');

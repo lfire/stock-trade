@@ -18,10 +18,11 @@
 
 ## 运行时派生数据集（非落盘输入）
 
-以下 5 个数据集由 src/algorithms 在运行时派生，不再写盘为独立 JSON、也不再是输入：
+以下 6 个数据集由 src/algorithms 在运行时派生，不再写盘为独立 JSON、也不再是输入：
 
 - `chips` ← `src/algorithms/chip-distribution.ts`（真实日 K + 换手率的成本分布估算模型）；
 - `intradayMulti` ← `src/algorithms/intraday-multi.ts`（末日真实分时 + 前 4 日按当日日 K 拟真，量额锚定日 K）；
+- `historicalIntraday` ← `src/algorithms/historical-intraday.ts`（按 tradeDate 索引近 5 日分时；消费者可注入授权数据覆盖）；历史分时的竞价（buildAuctionSeries：锚定真实 9:25/15:00 端点 + 三原则撮合示意）与逐笔（buildTradeSeries：按分钟量额锚定分时）均在选中日现场生成，属示意数据、不落盘、不在界面展示来源说明；
 - `depthFull` ← `src/algorithms/order-book.ts`（由 `orders` 委托流回放聚合，前十档与 `depth` 快照闭合）；
 - `depthScenarios` ← `src/algorithms/depth-scenarios.ts`（普通 / 涨停 / 跌停场景）；
 - `trades`（逐笔明细）← `buildTradeSeries(intraday)` 运行时生成、不落盘；原落盘输入 `trades_20261113.json` 已删除，不再写盘；合并分笔委托号关联 `ordIds` 同步移除。

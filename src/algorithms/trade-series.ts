@@ -95,3 +95,17 @@ export function buildTradeSeries(
   }
   return trades;
 }
+
+/**
+ * 逐笔涨跌口径的单一真源：以上一笔成交价为基准，首行对昨收；涨 1 / 跌 -1 / 平 0。
+ * detail.ts 的当日 bindDataset 与历史分时视图共用，避免两处手写同一 map。
+ * 纯函数：不修改入参，返回带 trend 的新数组。
+ */
+export function withTradeTrend(
+  rows: TradeTick[], preClose: number,
+): Array<TradeTick & { trend: number }> {
+  return rows.map((t, i, arr) => {
+    const diff = t.price - (i === 0 ? preClose : arr[i - 1].price);
+    return { ...t, trend: Math.abs(diff) < 1e-6 ? 0 : diff > 0 ? 1 : -1 };
+  });
+}

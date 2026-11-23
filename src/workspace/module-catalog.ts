@@ -1,5 +1,5 @@
 /**
- * Workspace 模块化目录：把页面壳按「功能域」拆成 12 个可按需装载的模块。
+ * Workspace 模块化目录：把页面壳按「功能域」拆成 13 个可按需装载的模块。
  *
  * 每个模块声明它依赖的运行时数据（DataKey）、依赖的其它模块（dependencies）、
  * 归属哪些预设（presets）、需要的 DOM / CSS 片段键（templateKeys / cssKeys），
@@ -27,8 +27,11 @@ export type DataKey =
   | 'depthFull'
   | 'depthScenarios';
 
-/** 预设档位：full 全量（默认）、intraday 分时、candle K 线、minimal 最小。 */
-export type WorkspacePreset = 'full' | 'intraday' | 'candle' | 'minimal';
+/**
+ * 预设档位：full 全量（默认）、intraday 分时、candle K 线（真按需，不含历史分时）、
+ * candle-full K 线 + 历史分时（依赖链自动补 detail-cover / trade-tape）、minimal 最小。
+ */
+export type WorkspacePreset = 'full' | 'intraday' | 'candle' | 'candle-full' | 'minimal';
 
 /** 单个功能域模块的静态描述。 */
 export interface WorkspaceModuleDef {
@@ -42,16 +45,22 @@ export interface WorkspaceModuleDef {
   presets: WorkspacePreset[];
   /** true = 可选模块；false / undefined = 核心必需（core） */
   optional?: boolean;
-  /** 需要的 DOM 片段键（shell / header / toolbar / chart / panes / tapeCard） */
+  /** 需要的 DOM 片段键（shell / header / toolbar / chart / panes / tapeCard）——向后兼容的共享键字段 */
   templateKeys: string[];
+  /**
+   * 该模块拥有的模板切片 id（模块级归属）。启用本模块时，template.ts 的
+   * templateSliceEnabled() 除匹配切片 owners 外，也据此产出独占 DOM；新模块配合
+   * registerTemplateSlice() 声明 id 即可产出独占 DOM，无需改内置切片白名单。
+   */
+  templateSlices?: readonly string[];
   /** 需要的 CSS 片段键 */
   cssKeys: string[];
-  /** 生命周期挂载位置；undefined / null = 主区域 */
-  lifecycle?: 'head' | 'controls' | 'detail' | null;
+  /** 生命周期挂载位置（可注册任意值）；undefined / null = 不挂载 */
+  lifecycle?: string | null;
 }
 
-/** 4 个预设值（同时作为 preset 白名单来源）。 */
-const PRESET_KEYS: readonly WorkspacePreset[] = ['full', 'intraday', 'candle', 'minimal'];
+/** 5 个预设值（同时作为 preset 白名单来源）。 */
+const PRESET_KEYS: readonly WorkspacePreset[] = ['full', 'intraday', 'candle', 'candle-full', 'minimal'];
 
 /** 归属全部预设（core / header）。 */
 const ALL_PRESETS: WorkspacePreset[] = [...PRESET_KEYS];
@@ -67,7 +76,7 @@ const DATA_DEPENDENCIES: Readonly<Partial<Record<DataKey, readonly DataKey[]>>> 
   chips: ['bars'],
 };
 
-/** 12 个内置功能域模块。 */
+/** 13 个内置功能域模块。 */
 const BUILTIN_MODULES: WorkspaceModuleDef[] = [
   {
     id: 'core',
@@ -129,15 +138,19 @@ const BUILTIN_MODULES: WorkspaceModuleDef[] = [
     requiresData: ['depth', 'orders'],
     dependencies: ['core'],
     presets: ['full', 'intraday'],
+    lifecycle: 'depth',
     templateKeys: ['tapeCard'],
     cssKeys: ['depthBook'],
   },
   {
     id: 'trade-tape',
     label: '逐笔明细',
-    requiresData: ['trades'],
+    // orders 让 deriveDataset 的 linkFillsToTrades() 生效：逐笔每行补齐 ordIds，
+    // 单独启用时不再输出缺关联字段的 trades。
+    requiresData: ['trades', 'orders'],
     dependencies: ['core'],
     presets: ['full', 'intraday'],
+    lifecycle: 'tape',
     templateKeys: ['tapeCard'],
     cssKeys: ['tapeCard'],
   },
@@ -181,6 +194,16 @@ const BUILTIN_MODULES: WorkspaceModuleDef[] = [
     templateKeys: ['toolbar'],
     cssKeys: ['toolbar'],
   },
+  {
+    id: 'historical-intraday',
+    label: '历史分时（日 K 查看）',
+    requiresData: ['intradayMulti', 'bars'],
+    dependencies: ['core', 'detail-cover'],
+    presets: ['full', 'candle-full'],
+    templateKeys: ['toolbar', 'tapeCard'],
+    cssKeys: ['historicalIntraday'],
+    lifecycle: 'detail',
+  },
 ];
 
 /**
@@ -193,17 +216,27 @@ for (const def of BUILTIN_MODULES) catalog[def.id] = def;
 /** 模块目录的只读视图；registerModule() 写入底层可变对象后此处立即可见。 */
 export const MODULE_CATALOG: Readonly<Record<string, WorkspaceModuleDef>> = catalog;
 
-/** 预设 → 模块 id 清单（full 全量 12，向后兼容默认全开）。 */
+/**
+ * 预设 → 模块 id 清单（full 全量 13，向后兼容默认全开）。
+ * candle 为真按需的 K 线档（不含 historical-intraday，不触发依赖链）；
+ * candle-full = candle + historical-intraday，依赖闭包会自动补 detail-cover / trade-tape。
+ * registerModule() 注册的新模块不会自动进入这些静态预设。
+ */
 export const MODULE_PRESETS: Readonly<Record<WorkspacePreset, string[]>> = {
   full: [
     'core', 'price-intraday', 'price-candle', 'auction', 'indicator', 'chip',
     'depth-book', 'trade-tape', 'detail-cover', 'panorama', 'header', 'toolbar',
+    'historical-intraday',
   ],
   intraday: [
     'core', 'price-intraday', 'auction', 'indicator', 'depth-book',
     'trade-tape', 'detail-cover', 'panorama', 'header', 'toolbar',
   ],
   candle: ['core', 'price-candle', 'indicator', 'chip', 'header', 'toolbar'],
+  'candle-full': [
+    'core', 'price-candle', 'indicator', 'chip', 'header', 'toolbar',
+    'historical-intraday',
+  ],
   minimal: ['core', 'price-intraday', 'header'],
 };
 
@@ -236,7 +269,7 @@ function topoSort(seeds: readonly string[]): string[] {
  * - modules 为非空显式数组时优先：过滤未知 id，自动补 core 与全部 dependencies 传递闭包；
  * - modules 未提供（undefined）或为空数组时按 preset 装载：合法 preset 直接采纳
  *   （空数组不再吞掉 preset 回退 full），preset 缺省 / 非法 / input 为 undefined → full；
- * - 新增模块默认不自动启用：MODULE_PRESETS 保持静态 4 预设清单，registerModule 注册的
+ * - 新增模块默认不自动启用：MODULE_PRESETS 保持静态 5 预设清单，registerModule 注册的
  *   新模块只有显式出现在 modules 数组里才装载，避免「注册即半装载」（无 DOM 切片 / 生命周期）。
  * 返回去重、依赖在前的拓扑顺序 id 数组。
  */

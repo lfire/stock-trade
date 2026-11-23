@@ -19,7 +19,7 @@ import {
 } from '../workspace/types';
 import { mountHead, syncHead } from '../workspace/head';
 import { mountControls, syncControls } from '../workspace/controls';
-import { mountDetail, syncDetail } from '../workspace/detail';
+import { mountDetail, syncDetail, mountSideData, syncSideData } from '../workspace/detail';
 import { emitEvent } from '../events';
 import type { ChartDataset, DetailData, MAConfig, MACDParams } from '../types';
 
@@ -45,6 +45,7 @@ interface ChartApi {
   setAuctionHover(index: number | null): void;
   setClosingHover(index: number | null): void;
   setSideExpanded(on: boolean): void;
+  setHistoricalIntradayDate?(date: string | null): void;
   getState(): Record<string, unknown>;
 }
 
@@ -52,23 +53,33 @@ interface ChartApi {
 const sameEnabled = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((id, i) => id === b[i]);
 
-/** 生命周期种类（对应 MODULE_CATALOG[id].lifecycle 的取值）。 */
-type WorkspaceLifecycle = 'head' | 'controls' | 'detail';
-
 interface LifecycleHooks {
   mount(ctx: WorkspaceContext): () => void;
   sync(ctx: WorkspaceContext): void;
 }
 
-/** lifecycle → 挂载/同步函数映射表；新模块声明 lifecycle 后据此落地，不留硬编码 id 判断。 */
-const LIFECYCLE_HOOKS: Readonly<Record<WorkspaceLifecycle, LifecycleHooks>> = {
-  head: { mount: mountHead, sync: syncHead },
-  controls: { mount: mountControls, sync: syncControls },
-  detail: { mount: mountDetail, sync: syncDetail },
-};
+/**
+ * 可变生命周期注册表：lifecycle 值（string）→ hooks。registerLifecycle() 让新模块声明的
+ * 任意 lifecycle 值都能落地，不再用固定三类枚举 + filter 静默丢弃未知值。
+ */
+const LIFECYCLE_HOOKS: Map<string, LifecycleHooks> = new Map<string, LifecycleHooks>([
+  ['head', { mount: mountHead, sync: syncHead }],
+  ['controls', { mount: mountControls, sync: syncControls }],
+  ['detail', { mount: mountDetail, sync: syncDetail }],
+]);
 
-/** 固定挂载顺序：与内置模块行为一致；每种 lifecycle 只挂一次（多模块共用时去重）。 */
-const LIFECYCLE_ORDER: readonly WorkspaceLifecycle[] = ['head', 'controls', 'detail'];
+/** 注册 / 覆盖一个生命周期的 hooks（单对象参数，≤3 参数）。 */
+export function registerLifecycle(name: string, hooks: LifecycleHooks): void {
+  LIFECYCLE_HOOKS.set(name, hooks);
+}
+
+// 侧栏数据生命周期：depth-book / trade-tape 各自声明不同值，共用同一份轻量 hooks
+// （mountSideData 内部按 root 幂等去重，full 同时启用两者也不会重复绑定）。
+registerLifecycle('depth', { mount: mountSideData, sync: syncSideData });
+registerLifecycle('tape', { mount: mountSideData, sync: syncSideData });
+
+/** 已告警过的未注册 lifecycle，保证同一值只 warn 一次。 */
+const warnedLifecycles: Set<string> = new Set();
 
 export class StockWorkspace extends HTMLElement {
   /** 结构化数据输入 */
@@ -212,17 +223,22 @@ export class StockWorkspace extends HTMLElement {
   private buildDetailData(): DetailData {
     const d = this._data;
     const depth = Array.isArray(d?.depth) ? d!.depth : [d?.depth].filter(Boolean);
-    return {
+    const out = {
       depth: (depth[0] as DetailData['depth']) ?? null,
       depthScenarios: (d?.depthScenarios ?? {}) as DetailData['depthScenarios'],
       trades: (d?.trades ?? []) as DetailData['trades'],
       orders: (d?.orders ?? []) as DetailData['orders'],
       depthFull: (d?.depthFull ?? null) as DetailData['depthFull'],
+      historicalIntraday: d?.historicalIntraday ?? null,
     } as DetailData;
+    return out;
   }
 
   /** 把配置增量映射到内部 chart 的公开方法；声明式子配置节点同步更新 */
   private applyConfig(patch: Partial<WorkspaceConfig>): void {
+    // 作用于覆盖视图 mini / DOM class 的字段（historicalAuctionEnabled / historicalTapeExpanded 等）
+    // 由 detail lifecycle 的 syncAll 从 config 快照消费；本函数只把配置增量映射到主 #chart 的公开方法，
+    // mini 是独立实例不在该链 —— 这类字段不在此出现是有意分工，不是遗漏。
     const c = this._chart;
     if (!c) return;
     const cfg = this._config;
@@ -252,6 +268,9 @@ export class StockWorkspace extends HTMLElement {
     if ('tapePlacement' in patch || 'mode' in patch) {
       c.setSideExpanded?.(cfg.tapePlacement === 'detail');
     }
+    if ('historicalIntradayDate' in patch) {
+      c.setHistoricalIntradayDate?.(cfg.historicalIntradayDate);
+    }
     if ('subplotIndicators' in patch) {
       cfg.subplotIndicators.forEach((name, i) => c.setSubplotIndicator?.(i, name));
       const panes = this.querySelectorAll('indicator-pane');
@@ -275,22 +294,36 @@ export class StockWorkspace extends HTMLElement {
     };
   }
 
-  /** 启用模块声明的生命周期种类：遍历 enabled 查 MODULE_CATALOG[id].lifecycle，去重并按固定顺序返回。 */
-  private activeLifecycles(): WorkspaceLifecycle[] {
-    const active = new Set<WorkspaceLifecycle>();
+  /**
+   * 按启用模块顺序收集其 lifecycle（每种只挂一次）：已注册的直接保留；
+   * 未注册的不静默丢弃——给一次 console.warn 后跳过，保证新值可见、可诊断。
+   */
+  private activeLifecycles(): string[] {
+    const active: string[] = [];
+    const seen = new Set<string>();
     for (const id of this._enabled) {
+      if (!isModuleEnabled(this._enabled, id)) continue;
       const lifecycle = MODULE_CATALOG[id]?.lifecycle;
-      if (lifecycle && isModuleEnabled(this._enabled, id)) active.add(lifecycle);
+      if (typeof lifecycle !== 'string' || !lifecycle || seen.has(lifecycle)) continue;
+      seen.add(lifecycle);
+      if (!LIFECYCLE_HOOKS.has(lifecycle)) {
+        if (!warnedLifecycles.has(lifecycle)) {
+          warnedLifecycles.add(lifecycle);
+          console.warn(`[stock-workspace] lifecycle "${lifecycle}" 未注册 hooks，已跳过挂载`);
+        }
+        continue;
+      }
+      active.push(lifecycle);
     }
-    return LIFECYCLE_ORDER.filter((lifecycle) => active.has(lifecycle));
+    return active;
   }
 
-  /** 按启用模块的 lifecycle 查映射表挂载；未启用的模块不挂载，其 cleanup 不进入 _cleanups */
+  /** 按启用模块顺序的 lifecycle 查注册表挂载；未注册值已由 activeLifecycles 过滤/告警。 */
   private mountLifecycles(): void {
     if (!this._ctx) return;
     const ctx = this._ctx;
     this._cleanups = this.activeLifecycles()
-      .map((lifecycle) => LIFECYCLE_HOOKS[lifecycle].mount(ctx));
+      .map((lifecycle) => LIFECYCLE_HOOKS.get(lifecycle)?.mount(ctx) ?? (() => {}));
   }
 
   /**
@@ -300,9 +333,9 @@ export class StockWorkspace extends HTMLElement {
    */
   private rebuildModules(): void {
     const enabled = this._enabled;
-    // 缓存明细卡片：分时模式 placeTape 会把 #tape-card 搬进旧 chart 的 sideTradeEl，
-    // 无条件 innerHTML 会连同旧 chart 一起销毁。先持有引用，重建后归位，
-    // 避免 minimal/candle 新模板无 #tape-home 时卡片永久消失。
+    // 缓存明细卡片引用：分时模式 placeTape 会把 #tape-card 搬进旧 chart 的 sideTradeEl，
+    // 无条件 innerHTML 会连同旧 chart 一起销毁。重建后由 restoreTapeCard 决定归位或丢弃
+    // （新模板无 tapeCard 切片时丢弃缓存、不补寄主，避免残留）。
     const card = this.querySelector<HTMLElement>('#tape-card');
     if (card) this._tapeCard = card;
     // 同步应用组件根主题：setConfig 走 rebuild 分支会跳过 applyConfig(patch)，
@@ -320,8 +353,8 @@ export class StockWorkspace extends HTMLElement {
     if (!this._chart) return;
     const chart = this._chart;
 
-    // 归位缓存的明细卡片；并同步把主题下沉到新 chart（微任务里的 applyConfig 会再
-    // setTheme 一次，幂等），不再依赖守卫。
+    // 处理缓存的明细卡片（新模板含 tapeCard 切片才归位，否则丢弃）；并同步把主题下沉到
+    // 新 chart（微任务里的 applyConfig 会再 setTheme 一次，幂等），不再依赖守卫。
     this.restoreTapeCard();
     chart.setTheme?.(this._config.theme);
 
@@ -337,27 +370,26 @@ export class StockWorkspace extends HTMLElement {
     });
   }
 
-  /** 把缓存的 #tape-card 归位到 #tape-home；新模板已自带卡片时以新节点为准（不重复）。 */
+  /**
+   * 缓存的 #tape-card 归位：仅当新模板含 tapeCard 切片（自带 #tape-home）时才处理；
+   * 否则丢弃缓存节点、不补任何隐藏寄主，避免切到无 tapeCard 的模板后残留旧 DOM。
+   */
   private restoreTapeCard(): void {
     const card = this._tapeCard;
+    this._tapeCard = null;
     if (!card) return;
-    // 新模板自带 #tape-card（full/intraday）：丢弃缓存，避免与新节点重复。
-    if (this.querySelector('#tape-card')) { this._tapeCard = null; return; }
-    // minimal/candle 新模板无 #tape-home：补一个隐藏寄主，卡片归位，节点不丢，
-    // 也让 detachDetailCard(card, home) 恒有宿主可用。
-    let home = this.querySelector<HTMLElement>('#tape-home');
-    if (!home) {
-      home = this.ownerDocument.createElement('div');
-      home.id = 'tape-home';
-      home.hidden = true;
-      this.appendChild(home);
-    }
+    // 新模板无 tapeCard 切片 → 无 #tape-home：直接丢弃缓存，不补 #tape-home，杜绝运行时残留。
+    const home = this.querySelector<HTMLElement>('#tape-home');
+    if (!home) return;
+    // 新模板已自带 #tape-card（full/intraday/candle-full）：以新节点为准，丢弃缓存避免重复。
+    if (this.querySelector('#tape-card')) return;
+    // 新模板含寄主却缺卡片（防御）：把缓存卡片归位。
     home.appendChild(card);
   }
 
   private syncAll(): void {
     if (!this._ctx) return;
     const ctx = this._ctx;
-    for (const lifecycle of this.activeLifecycles()) LIFECYCLE_HOOKS[lifecycle].sync(ctx);
+    for (const lifecycle of this.activeLifecycles()) LIFECYCLE_HOOKS.get(lifecycle)?.sync(ctx);
   }
 }

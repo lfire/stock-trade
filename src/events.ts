@@ -30,6 +30,7 @@ export const CHART_EVENTS = Object.freeze({
   DEPTH_LEVELS_CHANGE: 'depth-levels-change',
   VIEW_PANORAMA: 'view-panorama',
   TAPE_SCROLL: 'tape-scroll',
+  HISTORICAL_INTRADAY_REQUEST: 'historical-intraday-request',
   WEBGL_CONTEXT_LOST: 'webglcontext-lost',
   WEBGL_CONTEXT_RESTORED: 'webglcontext-restored',
 });
