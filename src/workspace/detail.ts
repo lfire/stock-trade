@@ -73,6 +73,8 @@ interface TapeApi extends HTMLElement {
   setViewConfig(cfg: TradeTapeViewConfig): void;
   setWindow(rows: DetailRow[]): void;
   visibleRows(): number;
+  readonly viewHeight: number;
+  paint(): void;
 }
 
 /** <depth-book> 用到的公开方法 */
@@ -96,14 +98,6 @@ interface CoverApi extends HTMLElement {
 
 interface CoverTape { head: HTMLElement; tape: TapeApi; }
 
-/**
- * 历史分时索引的局部窄接口：DetailData 契约尚未声明 historicalIntraday，
- * 运行期由 buildDetailData() 以 Record<string, unknown> 附带，故按窄接口断言读取（0 显式 any）。
- */
-interface HistoricalDetail {
-  historicalIntraday?: Record<string, HistoricalIntradaySeries> | null;
-}
-
 /** 覆盖视图内独立 <stock-chart> 实例的窄接口（setDataset 由组件提供，其余由 HTMLElement 继承） */
 interface IntradayMini extends HTMLElement {
   setTheme(theme: string | Record<string, string> | null): void;
@@ -119,13 +113,8 @@ interface IntradayMini extends HTMLElement {
   }): void;
 }
 /** 历史分时侧栏的逐笔明细（替代十档盘口，不挂 depth-book） */
-interface HistTape extends HTMLElement {
-  setData(rows: TradeRow[]): void;
-  setViewConfig(cfg: TradeTapeViewConfig): void;
-  setWindow(rows: unknown[]): void;
-}
+type HistTape = TapeApi;
 
-/** 历史分时来源标注条文案（key 与 HistoricalIntradaySeries.source 对齐） */
 /** 每个 root 一份的闭包状态（替代原页面的全局 let 变量） */
 interface State {
   controller: AbortController;        // mount 级事件（chart / tape-card / book）
@@ -264,14 +253,9 @@ function coverRegion(ctx: WorkspaceContext, id: string): HTMLElement | null {
     || null;
 }
 
-/**
- * 历史分时索引：优先 ctx.data()（ChartDataset 已声明该字段），
- * 回退 detailData 运行期附带的 historicalIntraday（窄接口断言，见 HistoricalDetail）。
- */
+/** historicalIntraday 已在 ChartDataset / DetailData 契约中声明，单一真源只读 ctx.data() */
 function historicalMap(ctx: WorkspaceContext): Record<string, HistoricalIntradaySeries> | null {
-  const fromData = ctx.data()?.historicalIntraday;
-  if (fromData) return fromData;
-  return (ctx.detailData() as HistoricalDetail).historicalIntraday ?? null;
+  return ctx.data()?.historicalIntraday ?? null;
 }
 
 /** 实际数据为准：只有索引里确有该日且带有效分钟点，才允许进入历史分时界面 */
@@ -450,8 +434,22 @@ const TAPE_CHROME_H = 26 + 24;
 /**
  * 上方共享工具栏吸收视口余数：在 openDetail 阶段对所有 tab 统一计算一次，
  * 保证当日逐笔 / 历史逐笔 / 全部挂单的 .cover-bar 严格等高。
- * 行高 18px、组标题 26px、表头 24px 三者均不改，只调 cover-bar 的 padding-bottom。
+ * 行高 18px、组标题 26px、表头 24px 三者均不改，余数【对称】分到 cover-bar 上下 padding。
  */
+/** 视口行对齐的单一真源：给定基准视口高与行高，返回可完整显示行数与待吸收余数 */
+function rowFit(viewBase: number, rowH: number = DETAIL_ROW_H): { L: number; extra: number } {
+  const L = Math.max(1, Math.floor(viewBase / rowH));
+  return { L, extra: Math.max(0, Math.floor(viewBase - L * rowH)) };
+}
+
+/** 多栏与侧栏共用：用「当前视口 + 已扣减值」反推基准，扣余数后重绘（幂等、自校正） */
+function fitTapeView(tape: TapeApi): void {
+  const current = parseFloat(tape.style.getPropertyValue('--sw-view-extra')) || 0;
+  const { extra } = rowFit(tape.viewHeight + current);
+  tape.style.setProperty('--sw-view-extra', `${extra}px`);
+  tape.paint(); // .view 由 CSS 变量动态改变，组件自身 RO 不触发，需显式重绘填满列表
+}
+
 /**
  * 把视口余数【对称】分配到元素上下 padding：总高恰好增加 extra，内容保持垂直居中。
  * 此前只加 padding-bottom 会让底部计数条 / 工具栏文字偏上。每次先清空 inline padding
@@ -474,8 +472,7 @@ function fitCoverBar(ctx: WorkspaceContext): void {
   if (!bar || !body) return;
   applyBalancedPadding(bar, 0); // 回到 CSS 基准（8px），再量基准视口
   const viewBase = body.clientHeight - TAPE_CHROME_H;
-  const L = Math.max(1, Math.floor(viewBase / DETAIL_ROW_H));
-  const extra = Math.max(0, Math.floor(viewBase - L * DETAIL_ROW_H));
+  const { extra } = rowFit(viewBase);
   applyBalancedPadding(bar, extra);
 }
 
@@ -597,9 +594,61 @@ function fitPanoramaViewport(ctx: WorkspaceContext): void {
   applyBalancedPadding(mid, 0); // 回到 CSS 基准（6px），再量基准列表视口
   const pitch = firstRow.getBoundingClientRect().height || DETAIL_ROW_H;
   const listH = list.clientHeight;
-  const L = Math.max(1, Math.floor(listH / pitch));
-  const extra = Math.max(0, Math.floor(listH - L * pitch));
+  const { extra } = rowFit(listH, pitch);
   applyBalancedPadding(mid, extra);
+}
+
+/** 有历史分时数据的交易日（统一升序口径，供前后切换与日期控件共用） */
+function histDateList(ctx: WorkspaceContext): string[] {
+  return Object.keys(historicalMap(ctx) ?? {}).sort();
+}
+
+const CAL_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 6h12"/></svg>';
+const LEFT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 2.5 5.5 8l4.5 5.5"/></svg>';
+const RIGHT_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5 10.5 8 6 13.5"/></svg>';
+
+/** 自绘月历：只有索引里存在数据的日期可点，其余一律置灰禁用 */
+function renderHistDatePanel(ctx: WorkspaceContext, panel: HTMLElement): void {
+  const dates = histDateList(ctx);
+  const cur = ctx.config().historicalIntradayDate ?? '';
+  const ym = panel.dataset.ym || (cur ? cur.slice(0, 7) : new Date().toISOString().slice(0, 7));
+  const [y, m] = ym.split('-').map(Number);
+  if (!y || !m) return;
+  const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7; // 周一为首列
+  const days = new Date(y, m, 0).getDate();
+  const iso = (d: number) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const cells: string[] = [];
+  for (let i = 0; i < lead; i += 1) cells.push('<span class="hist-cal-cell empty"></span>');
+  for (let d = 1; d <= days; d += 1) {
+    const v = iso(d);
+    cells.push(dates.includes(v)
+      ? `<button type="button" class="hist-cal-cell${v === cur ? ' sel' : ''}" data-date="${v}">${d}</button>`
+      : `<span class="hist-cal-cell disabled" aria-disabled="true">${d}</span>`);
+  }
+  panel.innerHTML = [
+    '<div class="hist-cal-head">',
+    `<button type="button" class="hist-cal-icon" data-month-step="-1" aria-label="上个月">${LEFT_ICON}</button>`,
+    `<span class="hist-cal-title">${y} 年 ${m} 月</span>`,
+    `<button type="button" class="hist-cal-icon" data-month-step="1" aria-label="下个月">${RIGHT_ICON}</button>`,
+    '</div>',
+    '<div class="hist-cal-week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>',
+    `<div class="hist-cal-grid">${cells.join('')}</div>`,
+  ].join('');
+}
+
+/** 同步日期控件：显示值、前后按钮边界、面板（打开时重渲染） */
+function syncHistDateNav(ctx: WorkspaceContext, host: HTMLElement): void {
+  const dates = histDateList(ctx);
+  const cur = ctx.config().historicalIntradayDate ?? '';
+  const label = host.querySelector('#hist-date-label');
+  if (label) label.textContent = cur || '选择日期';
+  const i = dates.indexOf(cur);
+  const prev = host.querySelector<HTMLButtonElement>('#hist-date-prev');
+  const next = host.querySelector<HTMLButtonElement>('#hist-date-next');
+  if (prev) prev.disabled = i <= 0;
+  if (next) next.disabled = i < 0 || i >= dates.length - 1;
+  const panel = host.querySelector<HTMLElement>('#hist-date-panel');
+  if (panel && !panel.hidden) renderHistDatePanel(ctx, panel);
 }
 
 /**
@@ -637,6 +686,78 @@ function renderHistoricalIntraday(ctx: WorkspaceContext): void {
   // 只保留功能按钮，不展示任何来源 / 示意说明；数据以实际索引内容为准
   const bar = doc.createElement('div');
   bar.className = 'hist-toolbar';
+  // 日期导航：icon 前后切换 + 自绘日期控件（无数据的日期在月历里置灰）
+  const nav = doc.createElement('div');
+  nav.className = 'hist-date-nav';
+  const signal = s.coverAbort?.signal;
+  const goDate = (delta: number) => () => {
+    const dates = histDateList(ctx);
+    const i = dates.indexOf(ctx.config().historicalIntradayDate ?? '');
+    const next = dates[i + delta];
+    if (next) ctx.patchConfig({ historicalIntradayDate: next });
+  };
+  const iconBtn = (id: string, svg: string, label: string): HTMLButtonElement => {
+    const b = doc.createElement('button');
+    b.type = 'button';
+    b.id = id;
+    b.className = 'hist-date-icon';
+    b.setAttribute('aria-label', label);
+    b.title = label;
+    b.innerHTML = svg;
+    return b;
+  };
+  const prevBtn = iconBtn('hist-date-prev', LEFT_ICON, '上一交易日');
+  prevBtn.addEventListener('click', goDate(-1), { signal });
+  const nextBtn = iconBtn('hist-date-next', RIGHT_ICON, '下一交易日');
+  nextBtn.addEventListener('click', goDate(1), { signal });
+  const trigger = doc.createElement('button');
+  trigger.type = 'button';
+  trigger.id = 'hist-date-trigger';
+  trigger.className = 'hist-date-trigger';
+  trigger.setAttribute('aria-haspopup', 'dialog');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.innerHTML = `${CAL_ICON}<span id="hist-date-label"></span>`;
+  const datePanel = doc.createElement('div');
+  datePanel.id = 'hist-date-panel';
+  datePanel.className = 'hist-date-panel';
+  datePanel.hidden = true;
+  datePanel.setAttribute('role', 'dialog');
+  const setOpen = (open: boolean): void => {
+    datePanel.hidden = !open;
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      const cur = ctx.config().historicalIntradayDate ?? '';
+      datePanel.dataset.ym = cur ? cur.slice(0, 7) : new Date().toISOString().slice(0, 7);
+      renderHistDatePanel(ctx, datePanel);
+    }
+  };
+  trigger.addEventListener('click', () => setOpen(datePanel.hidden), { signal });
+  datePanel.addEventListener('click', (e: Event) => {
+    const t = e.target as HTMLElement;
+    const day = t.closest<HTMLElement>('[data-date]');
+    if (day?.dataset.date) {
+      ctx.patchConfig({ historicalIntradayDate: day.dataset.date });
+      setOpen(false);
+      return;
+    }
+    const step = t.closest<HTMLElement>('[data-month-step]');
+    if (step?.dataset.monthStep) {
+      const [y, m] = (datePanel.dataset.ym || '').split('-').map(Number);
+      const d = new Date(y, m - 1 + Number(step.dataset.monthStep), 1);
+      datePanel.dataset.ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      renderHistDatePanel(ctx, datePanel);
+    }
+  }, { signal });
+  doc.addEventListener('pointerdown', (e: Event) => {
+    if (!datePanel.hidden && !nav.contains(e.target as Node)) setOpen(false);
+  }, { signal });
+  doc.addEventListener('keydown', (e: Event) => {
+    if (!datePanel.hidden && (e as KeyboardEvent).key === 'Escape') setOpen(false);
+  }, { signal });
+  const group = doc.createElement('div');
+  group.className = 'hist-date-group';
+  group.append(prevBtn, trigger, nextBtn);
+  nav.append(group, datePanel);
   const actions = doc.createElement('div');
   actions.className = 'hist-actions';
   const auctionBtn = doc.createElement('button');
@@ -652,7 +773,7 @@ function renderHistoricalIntraday(ctx: WorkspaceContext): void {
     historicalTapeExpanded: !ctx.config().historicalTapeExpanded,
   }), { signal: s.coverAbort?.signal });
   actions.append(auctionBtn, tapeBtn);
-  bar.appendChild(actions);
+  bar.append(nav, actions);
   host.appendChild(bar);
 
   // 内容区：左侧独立分时实例 + 右侧可展开的放大逐笔面板（不触碰 stock-chart 内部 sideSlot）
@@ -684,6 +805,7 @@ function renderHistoricalIntraday(ctx: WorkspaceContext): void {
   const tape = doc.createElement('trade-tape') as unknown as HistTape;
   tape.setAttribute('slot', 'side');
   tape.setAttribute('order', 'desc');
+  tape.setAttribute('follow-crosshair', '');
   mini.appendChild(tape);
   body.appendChild(mini);
   // 多栏逐笔面板：与侧栏共享同一份该日逐笔，展开后全宽覆盖内容区
@@ -785,29 +907,16 @@ function buildHistoricalTapeGroups(ctx: WorkspaceContext): void {
     }
   }
   // 行高（DETAIL_ROW_H = LAYOUT.rowH）与其它列表一致，不改列表项；
-  // 把「不足一行的余数」补到底部计数条的 padding-bottom 上，让 .view 高度恰好 = L*rowH：
-  // 既不裁半行，也不在底部留白。
-  fitHistoricalTapeFoot(ctx);
+  // 由 fitTapeView 用 --sw-view-extra 校准视口为整数行：既不裁半行，也不在底部留白。
+  fitHistoricalTapeColumns(ctx);
   s.histL = Math.max(1, s.histGroups[0]?.tape.visibleRows() || 20);
   updateHistoricalSpacer(ctx, n);
 }
 
-/**
- * 底部计数条吸收视口余数：每次都先恢复到 CSS 基准内边距再量基准视口高，
- * 计算可完整显示的行数 L，把 viewH - L*rowH 补到 padding-bottom（幂等、不随滚轮累积）。
- */
-function fitHistoricalTapeFoot(ctx: WorkspaceContext): void {
-  const s = getState(ctx);
-  const host = coverRegion(ctx, 'cover-intraday');
-  const foot = host?.querySelector('.hist-tape-foot') as HTMLElement | null;
-  const tape = s.histGroups[0]?.tape;
-  const view = tape?.shadowRoot?.querySelector('.view') as HTMLElement | null;
-  if (!foot || !view) return;
-  applyBalancedPadding(foot, 0); // 回到 CSS 基准（6px），避免多次调用累加
-  const viewH = view.clientHeight; // 读取会强制同步布局，得到未调整时的基准视口高
-  const L = Math.max(1, Math.floor(viewH / DETAIL_ROW_H));
-  const extra = Math.max(0, Math.floor(viewH - L * DETAIL_ROW_H));
-  applyBalancedPadding(foot, extra);
+/** 展开态多栏：取第一栏 tape 交给 fitTapeView 校准（计数栏已固定高度，不在此调整） */
+function fitHistoricalTapeColumns(ctx: WorkspaceContext): void {
+  const tape = getState(ctx).histGroups[0]?.tape;
+  if (tape) fitTapeView(tape);
 }
 
 /** spacer 高度只映射整条时间线的起点/终点，随每栏行数 L 同步更新 */
@@ -852,24 +961,11 @@ function renderHistoricalTapeWindow(ctx: WorkspaceContext): void {
   }
 }
 
-/** 历史分时视图状态：竞价开关下沉到 mini 属性，展开态切 host class，按钮文案同步 */
-/**
- * 收起态历史分时右侧逐笔栏：把 .view 视口不足一行的余数用 --sw-view-extra 扣掉。
- * 行高 18px、表头 24px、共享 .cover-bar 全部不变；该变量是动态 CSS，无需重建 shadow DOM。
- * 每次先移除变量再量基准视口，幂等、切换视图不累积。
- */
+/** 收起态侧栏：取 mini 的 [slot=side] tape 交给 fitTapeView 校准 */
 function fitHistoricalSideTape(ctx: WorkspaceContext): void {
-  const mini = getState(ctx).intradayMini;
-  const tape = mini?.querySelector('trade-tape[slot="side"]') as HTMLElement | null;
-  const view = tape?.shadowRoot?.querySelector('.view') as HTMLElement | null;
-  if (!tape || !view) return;
-  // 用「当前视口 + 已扣减值」反推未扣减的基准视口：布局从中间态稳定后会自动收敛，
-  // 多次调用也不会漂移（幂等）。
-  const current = parseFloat(tape.style.getPropertyValue('--sw-view-extra')) || 0;
-  const viewBase = view.clientHeight + current;
-  const L = Math.max(1, Math.floor(viewBase / DETAIL_ROW_H));
-  const extra = Math.max(0, Math.floor(viewBase - L * DETAIL_ROW_H));
-  tape.style.setProperty('--sw-view-extra', `${extra}px`);
+  const tape = getState(ctx).intradayMini
+    ?.querySelector('trade-tape[slot="side"]') as HistTape | null;
+  if (tape) fitTapeView(tape);
 }
 
 function applyHistoricalViewState(ctx: WorkspaceContext): void {
@@ -900,6 +996,8 @@ function applyHistoricalViewState(ctx: WorkspaceContext): void {
     // 展开后布局尺寸才生效，下一帧按真实宽度重算栏数与每栏可见行数；句柄存 State 供释放时取消
     s.histRaf = ctx.root.ownerDocument.defaultView?.requestAnimationFrame?.(syncGroups) ?? null;
   }
+  // 日期控件状态：显示值、icon 按钮边界、月历面板（打开时重渲染）
+  syncHistDateNav(ctx, host);
   const aBtn = host.querySelector<HTMLButtonElement>('#hist-auction-toggle');
   if (aBtn) {
     aBtn.textContent = `竞价：${auctionOn ? '开' : '关'}`;
@@ -1087,7 +1185,7 @@ export function openDetail(ctx: WorkspaceContext): void {
   });
   s.coverRO.observe(cover);
   // 共享上方工具栏按统一几何补差：所有 tab 的 .cover-bar 严格等高，
-  // 且列表视口恰好是整行高；历史逐笔再用 fitHistoricalTapeFoot 吸收自身余数。
+  // 且列表视口恰好是整行高；展开态多栏再由 fitHistoricalTapeColumns → fitTapeView 校准。
   fitCoverBar(ctx);
   applyDetailMode(ctx);
 }

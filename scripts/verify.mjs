@@ -754,7 +754,9 @@ ok(html.includes('height: var(--sw-bar-h, 24px)') && tapeSrc.includes('var(--sw-
     'minimal 模板未按模块裁剪');
   ok(!buildWorkspaceCSS(minimalMods).includes('.pano-row'),
     'minimal CSS 仍含全景盘口规则');
-  // 历史分时：不展示来源/示意说明；无数据前置拦截 + 组件内轻提示
+  // 历史分时：不展示来源/示意说明；无数据前置拦截 + 组件内轻提示。
+  // 注意：下方断言中的 hist-src / HIST_SOURCE_LABEL / hist-tape-head / fitHistoricalTapeFoot
+  // 等旧名字符串都是「防回归」的左值，不是代码残留。
   const histSrc = readFileSync(path.join(root, 'src/workspace/detail.ts'), 'utf8');
   ok(!histSrc.includes('hist-src') && !histSrc.includes('HIST_SOURCE_LABEL')
     && histSrc.includes('hasHistoricalSeries') && histSrc.includes('showNoDataHint')
@@ -767,7 +769,7 @@ ok(html.includes('height: var(--sw-bar-h, 24px)') && tapeSrc.includes('var(--sw-
   ok(histSrc.includes('const measured') && histSrc.includes('updateHistoricalSpacer')
     && histSrc.includes('visibleRows()'),
   '多栏逐笔缺少按视口校准每栏行数，最后一行会被裁成半截');
-  ok(histSrc.includes('fitHistoricalTapeFoot') && histSrc.includes('paddingBottom'),
+  ok(histSrc.includes('fitHistoricalTapeColumns') && histSrc.includes('paddingBottom'),
     '多栏逐笔未用底部计数条吸收视口余数，列表底部会留白或行高被改动');
   ok(histSrc.includes('fitCoverBar') && histSrc.includes('TAPE_CHROME_H')
     && tplSrc.includes('--sw-bar-h: 24px') && tplSrc.includes('height: 26px'),
@@ -779,8 +781,40 @@ ok(html.includes('height: var(--sw-bar-h, 24px)') && tapeSrc.includes('var(--sw-
     && tapeSrc.includes('--sw-view-extra'),
   '历史分时收起态右侧逐笔栏缺少视口余数吸收，底部会残留半行');
   ok(histSrc.includes('applyBalancedPadding') && histSrc.includes('paddingTop')
-    && (histSrc.match(/applyBalancedPadding\(/g) || []).length >= 6,
+    && (histSrc.match(/applyBalancedPadding\(/g) || []).length >= 4,
   '视口余数只补 padding-bottom，会让底栏/工具栏文字不垂直居中');
+  ok(tplSrc.includes('height: 44px') && tplSrc.includes('height: 28px')
+    && histSrc.includes('--sw-view-extra'),
+  '历史分时功能栏/计数栏未按统一几何固定高度');
+  const chartSrc = readFileSync(path.join(root, 'src/elements/stock-chart.ts'), 'utf8');
+  ok(chartSrc.includes('tapeOnly') && histSrc.includes('tape.paint()'),
+    '历史分时侧栏底部空寄主未隐藏，或视口变化后未重绘（会留白）');
+  const tapeSrc2 = readFileSync(path.join(root, 'src/elements/trade-tape.ts'), 'utf8');
+  ok(histSrc.includes('follow-crosshair') && tapeSrc2.includes('scrollToTime'),
+    '历史分时鼠标划过时侧栏逐笔缺少滚动联动定位');
+  ok(histSrc.includes('function rowFit') && histSrc.includes('fitTapeView')
+    && histSrc.includes('type HistTape = TapeApi') && tapeSrc2.includes('get viewHeight')
+    && !histSrc.includes("shadowRoot?.querySelector('.view')"),
+  '视口行对齐算法未收敛为单一真源，或仍在穿透 shadow DOM');
+  // 历史分时工具栏：icon 前后切换 + 日期控件（无数据日期置灰）
+  // 图标与日期垂直居中：12px 同高内容盒 + 对称图标 + 不占盒的工具栏底边
+  ok(tplSrc.includes('.hist-date-trigger > span') && tplSrc.includes('height: 12px')
+    && tplSrc.includes('inset 0 -1px 0 var(--sw-line')
+    && histSrc.includes('y="2.5" width="12" height="11"'),
+  '日期控件图标 / 文字垂直居中规则缺失');
+  ok(histSrc.includes("trigger.className = 'hist-date-trigger'")
+    && tplSrc.includes('.hist-date-group > button + button')
+    && tplSrc.includes('.hist-cal-icon svg'),
+  '日期控件分段样式或触发器 class 缺失（会导致打开态高亮/图标样式静默失效）');
+  ok(histSrc.includes('hist-date-nav') && histSrc.includes('hist-date-prev')
+    && histSrc.includes('hist-date-next') && histSrc.includes('hist-date-trigger')
+    && histSrc.includes('hist-date-panel') && histSrc.includes('renderHistDatePanel')
+    && tplSrc.includes('.hist-cal-cell.disabled'),
+  '历史分时缺少 icon 前后切换 / 日期控件 / 无数据日期置灰');
+  ok(!histSrc.includes('来源标注条文案') && !histSrc.includes('契约尚未声明')
+    && !histSrc.includes('fitHistoricalTapeFoot')
+    && histSrc.includes('fitHistoricalTapeColumns'),
+  '残留孤儿注释 / 过时契约说明 / 名不副实的旧函数名');
   // 历史分时多栏逐笔：滚轮驱动共享起始行，不再用翻页按钮
   const dtlSrc = readFileSync(path.join(root, 'src/workspace/detail.ts'), 'utf8');
   ok(tplSrc.includes('hist-tape-scroll') && tplSrc.includes('pointer-events: none')
@@ -872,3 +906,15 @@ if (problems.length) {
   process.exit(1);
 }
 console.log('\n✅ 全部校验通过');
+
+// 文档一致性门禁：README 与 docs/00 的「当前事实速查」必须同步，避免逐轮追加导致漂移
+{
+  const rd = readFileSync(path.join(root, 'README.md'), 'utf8');
+  const d00 = readFileSync(path.join(root, 'docs/00-概念总览与术语词典.md'), 'utf8');
+  const quick = (txt) => txt.split('\n').find((l) => l.includes('当前事实速查')) || '';
+  const rq = quick(rd), dq = quick(d00);
+  ok(rq.length > 0 && dq.length > 0, 'README / docs00 缺少「当前事实速查」');
+  for (const f of ['13', '5', '17', '14', '124/124', '81 JS + 82', '44', '28', '46', '18', '26', '24']) {
+    ok(rq.includes(f) && dq.includes(f), `文档当前事实速查不同步：${f}`);
+  }
+}

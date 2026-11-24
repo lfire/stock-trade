@@ -52,7 +52,26 @@ export class TradeTape extends HTMLElement {
     this.rows = this.getAttribute('order') === 'desc' ? [...src].reverse() : src;
     this.renderShell();
   }
-  setActiveTime(time: string | null) { this.activeTime = time; this.paint(); }
+  setActiveTime(time: string | null) {
+    this.activeTime = time;
+    // 开启跟随定位时，把对应时间的行滚动到视口中央；
+    // 否则该行常在可见区之外，只有 activeTime 变化、看不到任何联动。
+    if (time && this.hasAttribute('follow-crosshair') && !this._windowMode) {
+      this.scrollToTime(time);
+    }
+    this.paint();
+  }
+
+  /** 把首个匹配分钟的行滚动到视口中央（rows 已按显示顺序排列，desc 时即倒序） */
+  scrollToTime(time: string) {
+    if (!this.view) return;
+    const idx = this.rows.findIndex((r) => (r.time || '').slice(0, 5) === time);
+    if (idx < 0) return;
+    const viewH = this.view.clientHeight;
+    const max = Math.max(0, this.rows.length * this.rowH - viewH);
+    const target = Math.max(0, Math.min(idx * this.rowH - viewH / 2 + this.rowH / 2, max));
+    this.view.scrollTop = target;
+  }
 
   /** 同一张表可切换数据集：成交明细与 Level-2 挂单共用四列网格，只换表头与标签字段 */
   headHtml() {
@@ -93,7 +112,9 @@ export class TradeTape extends HTMLElement {
     return { headH, viewH: Math.floor(avail / this.rowH) * this.rowH };
   }
 
-  visibleRows() { return Math.max(1, Math.floor((this.view?.clientHeight || 0) / this.rowH)); }
+  /** 供容器层读取当前列表视口高度（避免穿透 shadow DOM） */
+  get viewHeight(): number { return this.view?.clientHeight || 0; }
+  visibleRows() { return Math.max(1, Math.floor(this.viewHeight / this.rowH)); }
   setScrollTop(top: number) {
     if (!this.view) return;
     // 程序化同步滚动不再向外派发 tape-scroll，避免联动回环

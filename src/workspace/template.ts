@@ -925,16 +925,182 @@ const CSS_SOURCE: string = `
       .cover-body:not(.intraday-mode) .cover-intraday {
         display: none;
       }
-      /* 历史分时视图顶部：交易日 / 数据来源标注条 */
-      /* 历史分时：只保留功能按钮，不展示来源 / 示意说明 */
+      /* 历史分时：左侧日期控件 + 右侧功能按钮，不展示来源 / 示意说明 */
       .detail-cover .hist-toolbar {
         flex: 0 0 auto;
+        box-sizing: border-box;
+        height: 44px;          /* 使 hist-body-24 恰为整行高，侧栏无需扣视口、底部不留白 */
         display: flex;
         align-items: center;
-        justify-content: flex-end;
-        padding: 5px 10px;
-        border-bottom: 1px solid var(--sw-line, #ECEEF1);
+        justify-content: space-between;  /* 左：日期导航；右：功能按钮 */
+        padding: 0 10px;
+        /* 用 inset 阴影代替 border-bottom：不占内容盒，控件相对 44px 精确居中（无 0.5px 偏移） */
+        box-shadow: inset 0 -1px 0 var(--sw-line, #ECEEF1);
         background: var(--sw-bg, #FFFFFF);
+      }
+      /* 日期控件：icon 前后切换 + 触发器 + 自绘月历（无数据日期置灰） */
+      .detail-cover .hist-date-nav {
+        position: relative;   /* 为月历浮层提供定位上下文，不占文档流 */
+        display: flex;
+        align-items: center;
+      }
+      /* 三段合一的分段控件：统一边框/圆角/背景，内部只用细分隔线 */
+      .detail-cover .hist-date-group {
+        box-sizing: border-box;
+        height: 26px;
+        display: flex;
+        align-items: center;
+        overflow: hidden;
+        border: 1px solid var(--sw-line, #E3E6EB);
+        border-radius: 6px;
+        background: var(--sw-panel, #F7F8FA);
+        font: 11px/1.4 system-ui, sans-serif;
+      }
+      .detail-cover .hist-date-group > button {
+        box-sizing: border-box;
+        height: 100%;
+        padding: 0 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: var(--sw-text, #1F2329);
+        font: inherit;
+        font-variant-numeric: tabular-nums;
+        cursor: pointer;
+      }
+      .detail-cover .hist-date-group > button + button {
+        border-left: 1px solid var(--sw-line, #E3E6EB);
+      }
+      .detail-cover .hist-date-icon { width: 26px; padding: 0; flex: 0 0 26px; }
+      .detail-cover .hist-date-trigger { min-width: 124px; }
+      /* 日期文字与 12px SVG 使用同高内容盒，避免 line-height:1 造成视觉重心偏移 */
+      .detail-cover .hist-date-trigger > span {
+        display: flex;
+        align-items: center;
+        height: 12px;
+        line-height: 12px;
+      }
+      .detail-cover .hist-date-group svg {
+        display: block;       /* 显式块级，避免 inline svg 基线间隙影响视觉居中 */
+        width: 12px;
+        height: 12px;
+        flex: 0 0 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .detail-cover .hist-date-trigger svg { color: var(--sw-muted, #6B7280); }
+      .detail-cover .hist-date-group > button:hover:not(:disabled) {
+        background: var(--sw-bg, #FFFFFF);
+      }
+      .detail-cover .hist-date-group > button:disabled {
+        opacity: 0.38;
+        cursor: default;
+      }
+      .hist-date-group > .hist-date-trigger[aria-expanded="true"] {
+        background: color-mix(in srgb, var(--sw-link, #185FA5) 18%, var(--sw-bg, #FFFFFF));
+        color: var(--sw-link, #185FA5);
+      }
+      .hist-date-group > .hist-date-trigger[aria-expanded="true"] svg { color: var(--sw-link, #185FA5); }
+      .detail-cover .hist-date-panel {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        z-index: 40;
+        box-sizing: border-box;
+        width: 236px;
+        padding: 8px;
+        border: 1px solid var(--sw-line, #ECEEF1);
+        border-radius: 8px;
+        background: var(--sw-bg, #FFFFFF);
+        box-shadow: 0 6px 20px rgba(31, 35, 41, .16);
+      }
+      .detail-cover .hist-date-panel[hidden] { display: none; }
+      .detail-cover .hist-cal-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+      .detail-cover .hist-cal-title {
+        color: var(--sw-text, #1F2329);
+        font: 11px/1.4 system-ui, sans-serif;
+        font-weight: 600;
+      }
+      .detail-cover .hist-cal-icon {
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--sw-text, #1F2329);
+        cursor: pointer;
+      }
+      .detail-cover .hist-cal-icon:hover { background: var(--sw-panel, #F7F8FA); }
+      /* 月份切换 icon 与工具栏箭头同一套细线风格（默认 fill 会变成实心黑三角） */
+      .detail-cover .hist-cal-icon svg {
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      /* 月份切换 icon 与工具栏箭头同一套细线风格（默认 fill 会变成实心黑三角） */
+      .detail-cover .hist-cal-icon svg {
+        width: 12px;
+        height: 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .detail-cover .hist-cal-week,
+      .detail-cover .hist-cal-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 2px;
+      }
+      .detail-cover .hist-cal-week span {
+        text-align: center;
+        color: var(--sw-muted, #6B7280);
+        font: 10px/1.8 system-ui, sans-serif;
+      }
+      .detail-cover .hist-cal-cell {
+        box-sizing: border-box;
+        height: 26px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--sw-text, #1F2329);
+        font: 11px/1 system-ui, sans-serif;
+        cursor: pointer;
+      }
+      .detail-cover button.hist-cal-cell:hover { background: var(--sw-panel, #F7F8FA); }
+      .detail-cover .hist-cal-cell.disabled {
+        color: var(--sw-muted, #6B7280);
+        opacity: 0.42;
+        cursor: default;
+      }
+      .detail-cover .hist-cal-cell.empty { visibility: hidden; }
+      .detail-cover .hist-cal-cell.sel {
+        background: color-mix(in srgb, var(--sw-link, #185FA5) 16%, var(--sw-bg, #FFFFFF));
+        color: var(--sw-link, #185FA5);
+        font-weight: 600;
       }
       .detail-cover .hist-actions {
         display: flex;
@@ -976,7 +1142,7 @@ const CSS_SOURCE: string = `
         border-color: var(--sw-link, #185FA5);
         color: var(--sw-link, #185FA5);
       }
-      /* 内容区：分时图全宽，展开态由浮层覆盖右侧 45%，视觉上等价于「侧栏放大」 */
+      /* 内容区：分时图全宽；展开态由 .hist-tape-panel 全宽覆盖（与当日逐笔明细一致） */
       .detail-cover .hist-body {
         position: relative;
         display: flex;
@@ -1046,10 +1212,12 @@ const CSS_SOURCE: string = `
       }
       .detail-cover .hist-tape-foot {
         flex: 0 0 auto;
+        box-sizing: border-box;
+        height: 28px;          /* 补偿功能栏调整，使展开态多栏视口仍为 24×18＝432px */
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 6px 10px;
+        padding: 0 10px;
         border-top: 1px solid var(--sw-line, #ECEEF1);
         background: var(--sw-panel, #F7F8FA);
         font: 11px/1.4 system-ui, sans-serif;

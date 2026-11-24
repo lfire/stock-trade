@@ -1,5 +1,8 @@
 # Stock Chart · 组件实现（P0 可运行骨架）
 
+> **当前事实速查（2026-11-23）**：13 个模块 / 5 个预设（full、intraday、candle、candle-full、minimal）/ 17 个 DOM 模板切片 / 14 段 CSS；`test` 124/124、`build` 81 JS + 82 声明、`pack` 167 文件（体积以 `npm pack --dry-run` 实测为准）；当前几何：行高 18px、组标题 26px、表头 24px、`.hist-toolbar` 44px、`.hist-tape-foot` 28px、共享 `.cover-bar` 46px（三视图等高），侧栏 `486 = 27×18`、展开多栏 `432 = 24×18`、均 `gap=0`。文末「变更记录」只记做法与结论，过程中的像素值与验收数字均为当时值，**当前事实一律以本速查为准**。
+
+
 集主图、多副图、筹码峰、集合竞价、交易明细、十档盘口于一体的 Web Components 实现。
 **重点是可运行的组件**；数据先真实抓取公开源，抓不到的按固定种子确定性 mock，产出结构稳定的示例 case。
 
@@ -64,7 +67,7 @@ scripts/
   build-order-book.mjs             委托流 mock + manifest 补回 orders
   build.mjs                        tsc 编译 + import 扩展名补全 + 产物校验
   verify.mjs                       数据口径 / 跨图闭合 / 源码 / 页面引用校验
-  tests/*.test.mjs                 110 个行为与契约测试（含第三方 TS 消费者探针）
+  tests/*.test.mjs                 124 个行为与契约测试（含第三方 TS 消费者探针）
   shared / limit-rules / auction-match   薄 re-export，复用 dist/algorithms
   serve.mjs                        零依赖静态服务（端口自动顺延 + no-store）
 docs/
@@ -116,7 +119,7 @@ defineAll();          // 注册全部 9 个标签；也可传自定义 registry 
 })} />
 ```
 
-**类型与发布**：源码已全面切换为 **TypeScript（strict，81 个 `.ts` 实现模块 + `global.d.ts`，0 显式 any）**。`npm run build` 调用 `tsc -p tsconfig.json`，把 `src/**/*.ts` 编译为 `dist/**/*.js` 并**自动生成 `dist/**/*.d.ts`**（不再维护配套手写声明，仅保留唯一 `src/global.d.ts`）；`src/global.d.ts`（JSX / `HTMLElementTagNameMap`）由构建脚本复制进 `dist`，并在 `dist/index.d.ts` 顶部注入三斜线引用，保证消费者 import 时获得全局声明；最后对每个 JS 产物做 `node --check`。`main` / `module` / `types` / `exports` 全部指向构建产物，`files` 只含 `dist` + `README.md` + `LICENSE`。`devDependencies.typescript` 锁定 `5.6.3`（CI 可 `npm ci` 复现，不依赖全局 `tsc`）。`npm test` 运行 110 个真实行为/契约断言（124/124 通过）；`pretest` / `precheck` / `predata` / `preserve` 会先构建，保证 Node 脚本与浏览器页面始终加载最新 `dist` 产物。`JSX.IntrinsicElements`、React 与 Vue 薄封装均已提供。
+**类型与发布**：源码已全面切换为 **TypeScript（strict，81 个 `.ts` 实现模块 + `global.d.ts`，0 显式 any）**。`npm run build` 调用 `tsc -p tsconfig.json`，把 `src/**/*.ts` 编译为 `dist/**/*.js` 并**自动生成 `dist/**/*.d.ts`**（不再维护配套手写声明，仅保留唯一 `src/global.d.ts`）；`src/global.d.ts`（JSX / `HTMLElementTagNameMap`）由构建脚本复制进 `dist`，并在 `dist/index.d.ts` 顶部注入三斜线引用，保证消费者 import 时获得全局声明；最后对每个 JS 产物做 `node --check`。`main` / `module` / `types` / `exports` 全部指向构建产物，`files` 只含 `dist` + `README.md` + `LICENSE`。`devDependencies.typescript` 锁定 `5.6.3`（CI 可 `npm ci` 复现，不依赖全局 `tsc`）。`npm test` 运行 124 个真实行为/契约断言（124/124 通过）；`pretest` / `precheck` / `predata` / `preserve` 会先构建，保证 Node 脚本与浏览器页面始终加载最新 `dist` 产物。`JSX.IntrinsicElements`、React 与 Vue 薄封装均已提供。
 
 ```html
 <stock-workspace id="ws"></stock-workspace>
@@ -344,146 +347,73 @@ defineAll();          // 注册全部 9 个标签；也可传自定义 registry 
 本机只有 `stable rustc 1.69 + wasm-pack 0.11.1`，**没有 nightly / rust-src**，无法按 `wasm-bindgen-rayon` 要求用 `build-std + atomics` 编译线程版 WASM。
 工具链就绪后只需实现 `WasmComputeEngine.indicator()` 同名方法，组件层无需改动。双构建与特性检测的部署配置见 `docs/03-组件架构与Rust性能方案设计.md` §6.3。
 
-## 后续
+## 实现约定与后续计划
+
+### 后续计划
 
 P1：分时模式副图口径统一、Worker + 列式二进制、双构建特性检测；
 P2/P3：L2 双来源适配、资金流副图；（筹码峰历史回放已实现，见「三列两行网格」表格）
 P4：Rust/WASM 接入、多线程压测与降级路径验证。
 
-**MACD 参数**：固定默认通达信/同花顺 `(12,26,9)`，不随 K 线根数分档；旧兼容包装 `adaptiveMACDParams()` 已于 2026-11-19 P2 移除，统一用 `resolveMACDParams()` / `parseMACDParams()`。参数支持三层配置：纯函数层 `resolveMACDParams({fast,slow,signal})` / `parseMACDParams('12,26,9')`（非法值回退默认）；组件层 `chart.setMACDParams(obj|string)` / `getMACDParams()`、HTML 属性 `macd="12,26,9"`、事件 `macd-params-change`；示例页 `?macd=12,26,9`。短历史序列预热不足时 MACD 按通达信语义留空（信息栏显示 `—`），需要显示可显式配更小参数。`ChartContext.macdParams` 是唯一真源，副图与信息栏都从它读取。
+### MACD 参数（唯一真源）
 
-> **历史记录说明**：以下各轮为按时间记录的历史状态，其中的模块数 / 测试数 / 数据集数均为当时值，不代表当前代码；
-> 当前状态以本文正文、[`docs/00-概念总览与术语词典.md`](docs/00-概念总览与术语词典.md) 与文末最新一轮为准。
+固定默认通达信/同花顺 `(12,26,9)`，不随 K 线根数分档；旧兼容包装 `adaptiveMACDParams()` 已于 2026-11-19 P2 移除，统一用 `resolveMACDParams()` / `parseMACDParams()`。参数支持三层配置：纯函数层 `resolveMACDParams({fast,slow,signal})` / `parseMACDParams('12,26,9')`（非法值回退默认）；组件层 `chart.setMACDParams(obj|string)` / `getMACDParams()`、HTML 属性 `macd="12,26,9"`、事件 `macd-params-change`；示例页 `?macd=12,26,9`。短历史序列预热不足时 MACD 按通达信语义留空（信息栏显示 `—`），需要显示可显式配更小参数。`ChartContext.macdParams` 是唯一真源，副图与信息栏都从它读取。
 
-**算法口径（2026-11-19 核验并修复 P0）**：`EMA` 采用通达信/同花顺口径（前 N 个值取简单平均作首个 EMA，前 N−1 根为 `null`），`MACD` 的 DEA 只在 DIF 有效段上递推、柱仍为 `2×(DIF−DEA)`；`KDJ` 与通达信 `SMA(X,3,1)` 递推一致。量比拆成两套：日线 `volumeRatio()` = 当日量 ÷ 前 5 日平均日量（K 线面板标注「日量比」），分时 `intradayVolumeRatio()` = (当日累计量 ÷ 当日累计开市分钟) ÷ (前 5 日平均日量 ÷ 240)，按上午 9:30–11:30 / 下午 13:00–15:00 共 240 分钟并扣午休。分钟 K 由 `intradayBucket()` 按交易时段边界分桶，11:30 / 15:00 收盘点归入所在时段最后一根，不再跨午休成根。`scripts/tests/algorithm-regression.test.mjs` 用独立基准双实现逐根比对（EMA/MACD/KDJ/量比/分钟 K），详见 `docs/algorithm-audit.html`。**P1 已完成（2026-11-19）**：筹码三角分布峰值改当日成交均价（成交额/成交量，一字板回退四价均价），分布形状 / 历史换手衰减系数 / 分桶精度 / 回看天数可通过 `npm run data -- --chips-shape=uniform --chips-decay=2 --chips-bins=200` 配置；UI「平均成本」对齐软件面板的 `COST(50)`、加权平均另列、集中度标注「面板口径」（`(高−低)/(高+低)`，非通达信 SCR 的再除 2 版本）。涨跌停比例由代码/名称识别板块（主板 10% / 创业科创 20% / 主板 ST 5% / 北交所 30%），涨跌停价四舍五入到分、判定容差固定 0.011 元，清除了 0.5% 相对容差的误标。集合竞价虚拟价 / 匹配量 / 未匹配量 / 方向改由 `scripts/auction-match.mjs` 按上交所《交易规则》3.5.2 三原则撮合生成，末点仍与真实开盘/收盘价及成交量闭合。`scripts/verify.mjs` 的涨跌停校验改用 manifest 比例 + 独立容差，并加入 MACD/KDJ/量比的预置期望值断言，替换循环论证；新增 `scripts/tests/p1-algorithm.test.mjs`（撮合三原则、板块比例、筹码口径）。
+### 算法口径
 
-**架构与数据契约规范化（2026-11-19 全量审计）**：详见 `docs/architecture-audit.html`。本轮落地四组修复 —— ① 出入参契约：修正 `index.d.ts` 14 处类型不符、移除无行为属性、补 `period` / `chip-mode` 属性与 React 的 `macd` / `intradayDays` 映射、补参数防御与只读返回值（`setMovingAverages()` 返回拷贝 / `rgba` 冻结缓存）、`data-store` 缺失分片真正跳过；② 数据可获得性：`manifest.provenance` 覆盖 10 个数据集（当时）并标注 Level-2 授权边界，数据体补 `source` / `license` / `requiresAuthorization` / `priceBasis`，UI 增加「示意撮合」「前 N 日为拟真数据」提示，`SOURCES.md` 覆盖 orders/depthFull/depthScenarios；③ 模块化：新增 `src/core/market-constants.ts` 作为 A 股业务常量单一真源（0.01 / ×100 / 240 分钟 / 时段 / 半小时刻度），涨跌停 0.9/1.1 硬编码改按 `manifest.limitRate` 计算；④ 工程链：`npm run data` 两步生成、`typecheck` 纳入 `react.d.ts`、新增 `scripts/tests/contract-runtime.test.mjs`（运行时契约回归）。`npm test` 45/45 全过。**P0 两项随后完成（2026-11-19）**：① `getContext()` 改为返回 `ChartContext.readonlyFacade()` 只读门面（`Object.freeze` + Proxy set/delete 陷阱、状态 getter 浅拷贝、不暴露内部方法），`index.d.ts` 新增精确的 `ChartContextFacade` 接口；② 组件层 9 处绕过 setter 的直接写全部收口到 ChartContext 的受控 setter `configure()` / `setPalette()` / `setPriceScale()` / `setDepthFull()` / `setViewport()`，静态核查组件层直接写 ctx 为 0 处，并修正初始 mode 在 `layout()` 之后才设置的时序。新增 `scripts/tests/p0-controlled-state.test.mjs`（7 个测试），`npm test` **52/52**，6 场景截图像素级无视觉回归。**P1 四组 + P2 两组随后一次性完成（2026-11-19）**：① 数据重跑可复现 —— 抓取脚本统一规范名 `hist_intraday.json`（同时写别名 `tx_minute.json`），生成脚本建立「规范名 → 兼容名 → `src/data/raw` 归档副本」三级回退并校验分钟点非空；② 事件契约 —— 新建 `src/events.ts`（`CHART_EVENTS` 冻结表 + `emitEvent()` 统一 bubbles/composed），全仓 `new CustomEvent` 只剩一处，盘口单位改 `depth-unit-request` → 根容器唯一派发 `depth-unit-change`；③ `exports` 补 `./vue` / `./events` / `./core/*` / `./gl/*` / `./compute/*` 并消除 `.js.js` 陷阱，新增无运行时依赖的 `vStockChart` 指令；④ 新建 `scripts/shared.mjs` 收口 `r2/r6/mulberry32`、常量模块补 `AUCTION_STEP_SEC/TIME`，`getSeries()` 读 `manifest.session`、复权标签读 `manifest.adjust`；⑤ `generatedAt` 支持 `SOURCE_DATE_EPOCH`、`floatShares` 改读 `instrument.json`（含来源）；⑥ 删除 `adaptiveMACDParams` / `CLEAR`，均线写入统一 `setMovingAverages()`，新增纯函数 `createPalette()` 并把 `applyPalette/resetPalette` 标 deprecated。新增 `scripts/tests/p1p2-architecture.test.mjs`（11 个测试）与 `pretest` 构建顺序保证，`npm test` **63/63**，8 场景截图 0 JS 错误。审计报告 8 组问题**全部完成**，详见 `docs/architecture-audit.html`。
+`EMA` 采用通达信/同花顺口径（前 N 个值取简单平均作首个 EMA，前 N−1 根为 `null`），`MACD` 的 DEA 只在 DIF 有效段上递推、柱仍为 `2×(DIF−DEA)`；`KDJ` 与通达信 `SMA(X,3,1)` 递推一致。量比拆成两套：日线 `volumeRatio()` = 当日量 ÷ 前 5 日平均日量（K 线面板标注「日量比」），分时 `intradayVolumeRatio()` = (当日累计量 ÷ 当日累计开市分钟) ÷ (前 5 日平均日量 ÷ 240)，按上午 9:30–11:30 / 下午 13:00–15:00 共 240 分钟并扣午休。分钟 K 由 `intradayBucket()` 按交易时段边界分桶，11:30 / 15:00 收盘点归入所在时段最后一根，不再跨午休成根。`scripts/tests/algorithm-regression.test.mjs` 用独立基准双实现逐根比对（EMA/MACD/KDJ/量比/分钟 K），详见 `docs/algorithm-audit.html`。**P1 已完成（2026-11-19）**：筹码三角分布峰值改当日成交均价（成交额/成交量，一字板回退四价均价），分布形状 / 历史换手衰减系数 / 分桶精度 / 回看天数可通过 `npm run data -- --chips-shape=uniform --chips-decay=2 --chips-bins=200` 配置；UI「平均成本」对齐软件面板的 `COST(50)`、加权平均另列、集中度标注「面板口径」（`(高−低)/(高+低)`，非通达信 SCR 的再除 2 版本）。涨跌停比例由代码/名称识别板块（主板 10% / 创业科创 20% / 主板 ST 5% / 北交所 30%），涨跌停价四舍五入到分、判定容差固定 0.011 元，清除了 0.5% 相对容差的误标。集合竞价虚拟价 / 匹配量 / 未匹配量 / 方向改由 `scripts/auction-match.mjs` 按上交所《交易规则》3.5.2 三原则撮合生成，末点仍与真实开盘/收盘价及成交量闭合。`scripts/verify.mjs` 的涨跌停校验改用 manifest 比例 + 独立容差，并加入 MACD/KDJ/量比的预置期望值断言，替换循环论证；新增 `scripts/tests/p1-algorithm.test.mjs`（撮合三原则、板块比例、筹码口径）。
 
-> **源码相对 import 写无扩展名，产物由构建补全 `.js`**：源码统一写 `import { chipSnapshotAt } from './chip-pane'`（`tsconfig.json` 的 `moduleResolution: Bundler` 负责解析到 `chip-pane.ts`）。`tsc` 自身**不会给产物补扩展名**，因此 `scripts/build.mjs` 在编译后扫描 `dist/**/*.js` 与 `dist/**/*.d.ts`，把 import/export 语句里的相对无扩展名 specifier 统一补成 `.js`，并校验目标文件存在；这样浏览器与 Node ESM 都能直接加载 `dist/`，第三方 TS 消费者也能正确解析声明。`verify.mjs` 以双向断言锁定：源码 specifier 禁止 `.js`/`.ts` 后缀、产物禁止残留无扩展名引用，并设 `>= 80` 处下限断言防止回归（现为 193 处源码 import / 244 处产物补全）。`tsconfig.json` 同时用 `verbatimModuleSyntax: true` / `allowImportingTsExtensions: false` 锁住类型导入与后缀规范。注释与文档里描述**源码文件**时写 `.ts`，描述**产物/包路径**时写 `.js`。
+### 源码 import 扩展名约定
 
-**类型收敛（2026-11-19）**：全仓 **205 处显式 `any` 归零**（`stock-chart.ts` 81、`chart-context.ts` 42、`trade-tape.ts` 25、`depth-book.ts` 18 等 14 个文件），并补齐了 tsc 推断出的 15 处声明级 `any`（`sma/ema/ma/macd/computeIndicator`、`aggregateDaily/aggregateIntraday`、`halfHourMarks`），因此 `src/**/*.ts` 与 `dist/**/*.d.ts` **均无任何 `any`**。做法：共享类型统一收口到 `src/types.ts`（新增 `Rect/PriceScale/Viewport/Pointer/NumericInput/OrderRecord/DepthBookSnapshot/ComputeResult/PaneElementLike` 等），字段用 `declare f: 精确类型 | null`、调用点用 `!` 非空断言（编译后擦除），`catch` 用 `unknown`，事件回调用具体 DOM 事件类型；全程零运行时改动，24 个 JS 产物与基线逐字节一致。同时给 `getDataset()` / `getSubplotConfig()` / `getContext()` / `chipSnapshotAt()` 补显式返回类型，消除了 tsc 声明里的 `import("..")`（该写法在 NodeNext 消费者下无法解析），独立第三方项目 Bundler / NodeNext / TSX 三种配置均 0 错误。
+源码统一写 `import { chipSnapshotAt } from './chip-pane'`（`tsconfig.json` 的 `moduleResolution: Bundler` 负责解析到 `chip-pane.ts`）。`tsc` 自身**不会给产物补扩展名**，因此 `scripts/build.mjs` 在编译后扫描 `dist/**/*.js` 与 `dist/**/*.d.ts`，把 import/export 语句里的相对无扩展名 specifier 统一补成 `.js`，并校验目标文件存在；这样浏览器与 Node ESM 都能直接加载 `dist/`，第三方 TS 消费者也能正确解析声明。`verify.mjs` 以双向断言锁定：源码 specifier 禁止 `.js`/`.ts` 后缀、产物禁止残留无扩展名引用，并设 `>= 80` 处下限断言防止回归（现为 193 处源码 import / 244 处产物补全）。`tsconfig.json` 同时用 `verbatimModuleSyntax: true` / `allowImportingTsExtensions: false` 锁住类型导入与后缀规范。注释与文档里描述**源码文件**时写 `.ts`，描述**产物/包路径**时写 `.js`。
 
-**TypeScript 工程切换（2026-11-19）**：按确认的方案完成整体迁移 —— ① `src/` 下 24 个模块全部从 `.js` 改为 `.ts` 并做 `strict: true` 全量标注（`tsc --noEmit` 零错误、无隐式 any）；共享类型（数据契约、事件映射、JSX 属性、只读门面等）统一收口到 `src/types.ts`，`src/global.d.ts` 保留全局标签声明；② 删掉 5 个手写 `.d.ts`，改由 `tsc` 自动生成 `dist/**/*.d.ts`，消除源码类型与手写声明两套漂移；③ `scripts/build.mjs` 重写为调用项目本地 `typescript@5.6.3` 编译 + 复制全局声明 + `dist/index.d.ts` 注入三斜线引用 + 产物语法校验；④ `index.html` 改从 `./dist/index.js` 加载，`npm run serve` 前置自动构建；⑤ `scripts/` 与 8 组测试保持 `.mjs`（`node --test` 直接跑），其对源码的 import 改指 `dist` 编译产物，源码文本断言改指 `.ts`，`verify.mjs` 与 `contract.test.mjs` 的声明类断言改为校验 tsc 生成产物；⑥ `package.json` 增加 `predata` / `precheck` / `pretest` / `preserve` 保证任何脚本运行前 `dist` 都是最新的，`typecheck` 改为 `tsc --noEmit -p tsconfig.json`。**编译产物与原 JS 逐模块字节级一致**（各模块标注组用 `transpileModule` 对比验证），7 场景截图 0 JS 错误且与切换前像素级一致；`check` / `test`(63/63) / `typecheck` / `build` / `pack` 全链路通过。
+## 变更记录（按主题归并，2026-11-23 整理）
 
-**数据分层与算法单元化（2026-11-20）**：按「市面可得数据为基准 / 尽量少依赖外部数据 / 中间数据尽量由计算获得 / 概念统一、逻辑单元以算法为分割」完成整体重构。
+> 本节只记「做了什么 / 最终怎么做」。过程中的像素值、行数、验收数字均为当时值，
+> **当前事实一律以文首「当前事实速查」为准**；历史分节不再逐轮追加，避免前后矛盾。
 
-- **L0 最小外部输入**：`bars_1d.json`（公开日 K）、`intraday_20261113.json`（公开分时）、`manifest.json` + `raw/instrument.json`（流通股本静态资料），另保留 4 份 Level-2 **示意数据**（`auction`/`trades`/`depth`/`orders`）—— 真实逐笔与委托簿需交易所授权，无法从分钟数据反推，因此以本地确定性 mock 呈现。`manifest.files` / `provenance` 由 10 键收敛为 **6 键**。（以上为该轮当时值；**本轮输入层精简后**进一步收敛为 **5 键**：`trades_20261113.json` 已删除、逐笔由 `buildTradeSeries(intraday)` 运行时生成 495 条，`depth` / `orders` 2 个 `level2-licensed`、`auction` 为 `l1-intraday-only`，当前事实见「数据来源」节。）
-- **L1 运行时派生**：`chips`、`intradayMulti`、`depthFull`、`depthScenarios` 四个 JSON **已删除**，统一由 `src/core/derive-dataset.ts` 调用 `src/algorithms/` 在加载时生成。分钟 K / 周月季年 K / MA·MACD·KDJ·量比 / 盘口金额 / 逐笔方向本就是运行时计算，本次一并纳入同一算法层。（本轮再把 `trades` 纳入 L1 运行时派生，共 5 个派生数据集。）
-- **算法单元**：新建 `src/algorithms/` 共 **18 个纯 TS 模块**（无 DOM、无 IO、0 显式 any），按概念而非图表切分；`ALGORITHMS` 注册表登记 `{ id, concept, inputs, outputs, sharedBy, pure }`，`pure` 子入口统一导出；`scripts/` 的 `shared` / `limit-rules` / `auction-match` 改为薄 re-export，构建期与运行时复用同一实现。
-- **跨图强逻辑关联（实测闭合）**：分时 15:00 累计量/额 == 当日日 K（原额差 22804.62 元）；逐笔按分钟聚合 **242/242 分钟**量额与分时严格相等（原 242/242 分钟 amount 全不等）；委托流 `ΣNEW = ΣFILL + ΣCANCEL + Σsnapshot`（原 261 条悬空挂单、两套状态机）；多日前 4 日累计量严格等于对应日 K（原差 3~4 倍）；全景盘口 53 买 / 33 卖档与「全部挂单」同源并覆盖到涨跌停价；场景切换不再覆盖原始 `depthFull`；单日 / 多日涨跌幅统一按各交易日昨收（末日 +1.77% 与单日一致）。
-- **概念统一**：成交额、均价/VWAP、换手率（统一 `%`）、涨跌幅基准、取整 half-up、时间解析收口到单一算法单元；数值换算与 `trim` 收口到 `format.ts`；展示策略（分组/小数位/单位后缀）按视图保留差异；`matchAuction` 补齐申报价之间的 0.01 步长中间价候选（上交所中间价口径）。
-- **验收**：`verify.mjs` 新增 8 条跨图闭合断言；`check` / `test` **64/64** / `typecheck` 0 错误 / `build` 44 JS + 45 声明 / 第三方 TS 项目 Bundler·NodeNext·TSX 均 0 错误 / 8 场景浏览器截图 0 JS 错误。
+### 2026-11-20 ~ 11-21 · 基础架构
 
-**容器 / 布局 / 模块架构（2026-11-20）**：按「整体页面分容器和模块；容器下的概念是布局，模块安排到布局中」完成概念分层，四层正交、单向依赖。
+| 主题 | 落地 |
+|---|---|
+| 数据分层 | 5 键落盘（bars / intraday / auction / depth / orders）+ L1 运行时派生；`deriveDataset()` 唯一枢纽，`loadDataset()` 只 IO，`setDataset()` 只归一化 |
+| 算法单元 | 18 个纯函数单元 + `ALGORITHMS`，`pure` 与 `algorithms/index` 同名导出同一引用；口径 / 常量 / 单位单点定义 |
+| 数值闭合 | 分时 15:00 累计额 == 日 K、逐笔按分钟 == 分时、竞价端点锚定真实 open/close/preClose、全景 53/33、委托守恒 |
+| 容器与布局 | 两个 Container + `MainCanvasLayout.compute()`，rect 全部钳制在画布内；`gl.scissor` 帧级隔离 |
+| 组件封装 | `<stock-workspace>` 单根组件，只 `data` / `config` 输入 + CustomEvent 输出；页面 0 `<style>` / 0 变量定义 |
+| 主题 | 组件自有 18 色 + 5 尺寸 `--sw-*` light/dark 两套；`resolveWorkspaceTheme` 与 `stock-chart.setTheme` 同源 |
+| 跨框架 | 内核 `createWorkspaceController` + 六类桥，零框架运行时依赖；`pure` 子入口 SSR 安全 |
+| 发布自包含 | `dist` 全产物随包，`index.html` 不入包；三方 TS Bundler / NodeNext / TSX 三种配置 0 错误 |
+| 模块化一/二 | `MODULE_CATALOG` 为装载依据，数据 / DOM / CSS / 生命周期按启用模块裁剪 |
 
-| 层 | 职责 | 实现 |
-|---|---|---|
-| **Workspace** | 编排两个容器 + 全局控件 | `index.html` |
-| **Container** | 渲染介质 + 生命周期 + 事件边界 | `main-canvas` = `<stock-chart>`（WebGL）；`detail-canvas` = `<detail-canvas>`（DOM 覆盖层，新增） |
-| **Layout** | 容器内一份**纯数据**，只划分空间 | `MainCanvasLayout`（主图/副图/竞价/筹码/侧栏/装饰 Region）、`DetailCanvasLayout`（标签栏/分组/全景 Region） |
-| **Region** | 布局最小槽位：`rect / target / visible / z / constraint` | `src/architecture/types.ts` |
-| **Module** | 可插拔内容单元，消费 `Region.rect` + 只读状态 | 共 8 个公开标签（7 原有 + `detail-canvas`）；`MODULE_REGISTRY` 11 项 = 6 个标签模块 + 装饰 + 信息栏 + 3 个详情模块 |
+### 2026-11-22 · 历史分时与多栏逐笔
 
-- **职责解耦**：`ChartContext` 原本一肩挑「状态真源 + 布局计算 + 渲染编排」（`applyLayout()` 一个方法混 8 件事）。现在状态留 `ChartContext`，空间归 `MainCanvasLayout.compute()`（纯函数、零副作用），应用与副作用归 `applyLayout()` 适配层；`renderFrame` 里 ≈8 个「无主装饰批次」收为 `CanvasDecorationModule`。
-- **术语统一（公开标签零破坏）**：`pane` 原本六义（Custom Element / 配置节点 / WebGL 裁剪批次 / DOM 信息栏 / 矩形 / 数组）。现在 `Module`（内容单元）、`Region`（空间槽位）、`Canvas`（专指 WebGL 元素）、`overlay`（无交互文本层）、`cover`（可交互详情层）各司其职；`TERMINOLOGY` 导出旧词→新词映射表。7 个原有标签名与公开 API 全部不变。
-- **布局只算一次**：原先布局计算散落三处（`applyLayout` 像素矩形 / `syncSideBars` CSS 变量 / 页面覆盖视图 Grid），现两容器各有 Layout 并共享画布尺寸真源；`detailGroupCount` / `detailRowsPerGroup` 收归 `DetailCanvasLayout`。
-- **验收**：`MainCanvasLayout` 与旧算法 18 场景 / 294 项逐字段一致；装饰模块 6 场景 / 2736 个 float 逐位一致；`<detail-canvas>` 全景 53/33 档、5 栏多组逐笔、三标签切换与返回图表均 0 JS 错误；`check` / `test` 64/64 / `typecheck` 0 / 第三方 TS 项目三种配置 0 错误。**视觉零变化**。
+| 主题 | 落地 |
+|---|---|
+| 历史分时入口 | 日 K 双击 / 下拉选日期 → `HISTORICAL_INTRADAY_REQUEST` → `patchConfig`；按 `tradeDate` 索引近 5 日分时，支持授权数据注入 |
+| 数据来源 | `deriveHistoricalDayView()` 具名纯函数在算法层「只算选中日」；竞价 / 逐笔为示意预览，不进全量派生、不落盘 |
+| 独立实例 | 覆盖视图内独立 mini `<stock-chart>`，事件全量 `isolate`、WebGL context 随 `disposeIntradayMini()` 回收、主题显式下沉 |
+| 多栏逐笔 | 按 `detailGroupCount(width)` 分 1~6 栏，每栏 `setWindow()` 一段共享 `histFrom` 的连续时间线；透明滚动层 + spacer 让**滚轮**换段，所有栏同步 |
+| 模块化收敛 | 模板切片改模块级 `owners` / `templateSlices`，生命周期改可变注册表；candle 拆为 `candle` / `candle-full`；`./modules/*` 与 `./workspace/*` 子路径可独立 import |
 
-**组件封装与标准化数据契约（2026-11-20）**：此前 `index.html` 的 `<main>` 里有 122 条组件级 CSS、约 150 行 DOM 与约 830 行组件状态镜像脚本，页面还直接 `chart.setXxx()`、`attachCover()`、`querySelector('.cover-*')`、`book.setData()`，且用 `dataset="./src/data"` 让组件自己去 fetch 路径。本轮把它收进单一根组件 `<stock-workspace>`（**light DOM**，视觉零变化）。
+### 2026-11-23 · 交互与像素级精修（最终状态）
 
-- **组件边界**：`<stock-workspace>` 是唯一公开入口，内部私有持有 `<stock-chart>`（绘图）、`<trade-tape>` / `<depth-book>` / `<detail-canvas>`，以及头部行情、工具栏、明细卡片、详情覆盖视图。`index.html` 从 2028 行收敛到 **255 行**，只剩站点壳、加载诊断与引导；组件级 CSS 由 `src/workspace/template.ts` 的 `WORKSPACE_CSS` 在 `connectedCallback` 注入。
-- **标准输入只有两个 JS 属性**：`workspace.data = ChartDataset`（结构化数据对象）、`workspace.config = Partial<WorkspaceConfig>`（配置对象，增量合并）。**组件不 fetch、不读路径、不解析 URL、不读全局状态**；页面负责 `loadDataset('./src/data')` 后把对象注入，`parseWorkspaceConfig(new URLSearchParams(...))` 把 20+ 个 URL 参数解析成配置对象一次性赋值。
-- **输出只有事件**：`WORKSPACE_EVENTS`（`workspace-ready` / `dataset-ready` / `workspace-config-change` / `chart-error` / `workspace-status`）+ 内部 chart 既有事件冒泡；页面只订阅事件做诊断，不再反向读 `getState()` / `getScenarioPano()` 或操作组件内部 DOM。
-- **内部模块按职责拆分**：`src/workspace/` 下 `types`（契约）/ `template`（DOM+CSS）/ `head`（head-change 渲染）/ `controls`（工具栏，只经 `patchConfig` 输出）/ `detail`（覆盖视图与虚拟滚动）/ `url-config`（页面侧 URL 解析）；统一 `WorkspaceContext` 注入 `root / chart / config() / patchConfig() / data() / detailData()`。
-- **`dataset` 路径属性已废弃**：保留在 `observedAttributes` 里仅给出 `console.warn`，不再触发任何数据加载；示例页与文档均改用 `workspace.data`。公开标签增至 **9 个**。
-- **验收**：`check` / `test` 64/64 / `typecheck` 0 / `build` 58 JS + 59 声明 / `pack` 121 文件 / 第三方 TS 三种配置 0 错误 / 4 场景浏览器截图 0 JS 错误且与封装前视觉一致；页面残留扫描 `dataset="./src/data"`、`chart.setXxx()`、`attachCover`、`querySelector('.cover-*')`、`getState()` 均为 **0 处**。
+| 主题 | 最终实现 |
+|---|---|
+| 说明精简 | 视图内不展示来源 / 示意 / 可用日期等任何说明，一律以实际数据为准；工具栏左侧为日期控件（icon 前后切换 + 月历）、右侧为功能按钮（竞价开关 / 展开逐笔明细） |
+| 无数据 | `hasHistoricalSeries()` 前置判断：读不到该日数据**不进入历史分时界面**，只在图表区中央弹一张 3 秒自动消失的「无数据」浮层卡片，不占文档流；同一日期只提示一次 |
+| 主题联动 | mini 的 `setTheme(config.theme)` 下沉，WebGL 实例色板与 host `--sw-*` 与根组件同源；切换主题、URL 指定 dark、展开态均同步 |
+| 严格对齐 | `rowFit(viewBase, rowH)` 是「算行数 / 扣余数」单一真源；`fitCoverBar()` 对称分配上下 padding，`fitTapeView(tape)` 用 `--sw-view-extra` 扣 shadow 视口。两套机制因几何约束相反并存 |
+| 当前几何 | 行高 18px、组标题 26px、表头 24px、`.hist-toolbar` 44px、`.hist-tape-foot` 28px、共享 `.cover-bar` 46px；三视图相同位置等高，侧栏 `486 = 27×18`、展开多栏 `432 = 24×18`，均 `gap=0`、无半行 / 无留白 |
+| 联动定位 | 鼠标划过分时图时，mini 侧栏 tape 按 `follow-crosshair` 把对应分钟行滚到视口中央并高亮 |
+| 日期切换 | 工具栏为**一个分段控件**（icon 上一交易日 / 日期触发器 / icon 下一交易日，共用圆角边框与细分隔线，图标与日期文字用同高 12px 内容盒严格垂直居中）；点击展开 `position:absolute` 的自绘月历，索引里**有数据**的日期可点、其余一律置灰禁用，边界 icon 按钮禁用；切换走 `patchConfig({historicalIntradayDate})`，主工具栏下拉同步回填，工具栏仍固定 44px、面板不占文档流 |
+| 分层收敛 | `Timeline<T>` + `clampFrom` / `sliceTimelineColumns` / `timelineSpacerHeight` 统一分段；`withTradeTrend()` 统一 trend；`TapeApi` 单一窄接口 + 公开 `get viewHeight()`，不再穿透 shadow DOM |
 
-**跨框架适配层（2026-11-20）**：此前 `./react` / `./vue` 绑定的是旧 `<stock-chart>` 的 13 个 setter，对新的 `<stock-workspace>`（`data`/`config` 对象属性）会**静默失效**。本轮按「框架无关内核 + 各框架生命周期桥」重建。
+### 复核与门禁
 
-| 层 | 实现 | 职责 |
-|---|---|---|
-| **内核** | `src/frameworks/controller.ts` | `createWorkspaceController(el, props)`：`data` 引用比较（允许 `null` 清空）、`config` 逐 key 浅 diff 只传变化 patch、事件订阅 + `destroy()`；零框架依赖、SSR 安全 |
-| **统一 Props** | `WorkspaceProps` | `data?: ChartDataset \| null`、`config?: Partial<WorkspaceConfig>`、`on?: {事件名: handler}`、驼峰 `onThemeChange` 等（与字典合并，`detail` 强类型） |
-| **React** | `./frameworks/react` | `createWorkspaceRef`（React 19 ref cleanup）、`createReactWorkspace(React)` 注入式组件工厂、`bindWorkspace` |
-| **Vue** | `./frameworks/vue` | `vWorkspace` 指令（`updated` 只增量 update，不全量重绑）、`createVueWorkspace(vue)`、`useWorkspace` composable |
-| **Svelte** | `./frameworks/svelte` | `workspaceAction` / `stockWorkspace`（`use:` action） |
-| **Angular** | `./frameworks/angular` | `createWorkspaceDirective()`（WeakMap 按元素隔离的纯指令对象）、`createAngularWorkspace(ng)` |
-| **Solid / Preact** | `./frameworks/solid` | `createWorkspaceSignalBinding`、`createPreactWorkspace`、`splitWorkspaceProps` |
-| **原生** | `./frameworks/vanilla` | `mount` / `mountWithData`（显式可选 IO，组件默认仍不 fetch） |
+- 模块化矩阵：13 单模块 / 5 预设 / 10 随机组合 **28 组 bad=0**；full 模板 / CSS 逐字符恒等；13 个子路径门面独立 import 通过。
+- 分层与数值：6 组闭合探针全 PASS、59 个同名导出 `===`、0 显式 any、import 无扩展名、新增函数 ≤3 参数、纯函数不改入参。
+- 浏览器回归：收起 / 展开 / dark / 当日逐笔 / 全景盘口 / 无数据六场景 + 十字光标联动，全部 0 JS 错误。
+- `verify.mjs` 含一致性门禁：旧函数名、孤儿注释、名不副实实现、视口余数未收敛、未居中补差等都会报错。
 
-- **零框架运行时依赖**：所有适配器只描述注入式工厂的本地 `interface`（`ReactLike` / `VueLike` / `SvelteLike` / `AngularLike` / `SolidLike`），由使用方传入框架实例；包无 `dependencies` / `peerDependencies`，不锁 React/Vue 版本。
-- **兼容**：旧 `bindStockChart` / `vStockChart` 原样保留并标 `@deprecated`；`WorkspaceEventMap` 补齐 `WORKSPACE_EVENTS` 到事件表；`global.d.ts` 的 `stock-workspace` JSX 声明补 `data`/`config`/`onXxx` 精确类型；`package.json` 补 5 个具名子路径与 `./frameworks/*` 的 `types` 条件。
-- **验收**：新增 `scripts/tests/framework-adapters.test.mjs`（15 个行为测试）与类型探针扩展；`test` **80/80**、`check` 通过、`typecheck` 0、`build` 63 JS + 64 声明、`pack` 131 文件、第三方 TS Bundler·NodeNext·TSX 均 0 错误。修复了内核 `camelToEventName` 产生前导连字符导致驼峰回调收不到事件的缺陷。
-
-**组件内置双主题（2026-11-21）**：此前主题被劈成两套并行体系——组件 host 写 `--sc-*`，页面 `:root` 又维护 `--bg/--panel/...` 桥接变量并靠 `theme-change` 事件同步，`WORKSPACE_CSS` 约 95% 选择器吃页面级变量。本轮将主题完全收进组件：统一 `--sw-*` 命名空间（18 色 + 5 尺寸）写入根组件，`WORKSPACE_CSS` 132 处变量全量替换、组件 CSS 零页面级依赖，删除 `:root` 桥接与事件同步；页面壳改用自有 `--page-*` + `html[data-theme]` 两套静态主题；补齐 dark 的 3 个缺失颜色键；清理两个 Shadow DOM 组件里 16 处 `${PALETTE.*}` 浅色插值兜底与 14 处硬编码浅色块（改为 `color-mix` 派生）。切换入口 `<stock-workspace theme>` / `config.theme` / `?theme=` 三合一，**并在组件工具栏内置「暗色 / 浅色」切换按钮**；`theme-change` 保留为纯通知。验收：`check` 通过 / `test` 80/80 / `build` 64 JS + 65 声明 / `pack` 133 文件 / 明暗两主题 8 场景截图 0 JS 错误，页面壳与组件内部（含详情覆盖视图、全景盘口）均完整换肤、无浅色残留；全仓 `--sc-*` 残留 0，页面不引用任何组件变量。
-
-**发布自包含修复（2026-11-21）**：上一轮虽把组件 CSS 搬进 `src/workspace/template.ts`，但 `index.html` 仍保留 93 行 `<style>`（页面壳 8 个 `--page-*` 变量 × 明暗两套 + body/header/demo-bar/footer 等 13 条规则）。这些内容不在 `package.json.files`（只含 dist + README + LICENSE），发布后消费者拿不到，属于无法对外发布的样式。本轮把整块样式逐字搬入新建的 `src/workspace/shell-css.ts`（`WORKSPACE_SHELL_CSS`），由 `ensureStyles()` 与 `WORKSPACE_CSS` 一并注入；追加 `:root:has(stock-workspace[data-theme="dark"])` 让组件自身驱动页面壳暗色；把 `#fatal` 与状态条的 6 处内联颜色改为 `.page-fatal` / `.page-status.ok|bad` 类（颜色定义同样在组件 CSS 里）。`index.html` 从 242 行降到 **145 行（当时 145；当前 160 行）、0 个 `<style>`、0 处变量定义、0 处 `var(--page-*)` 引用**；`verify.mjs` 新增 4 条负向断言守住这一边界。验收：`dist/workspace/shell-css.js` 与 `.d.ts` 均在 `npm pack` 清单内（135 文件）、`index.html` 不在包内；`check` 通过 / `test` 80/80 / `build` 65 JS + 66 声明 / 明暗 4 场景截图 0 JS 错误，页面壳与组件内部样式完整。
-
-**界面明暗主题切换（2026-11-21）**：此前切主题只能靠 URL `?theme=dark` 或配置属性。本轮按「与组件相关都在组件内部」原则，在 `WORKSPACE_TEMPLATE` 的 `.chart-tools` 末尾新增 `#btn-theme` 按钮（light 显示「暗色」/ dark 显示「浅色」并高亮），`controls.ts` 的点击只调 `ctx.patchConfig({ theme: next })`，由 `applyConfig()` 统一走 `applyWorkspaceTheme()` + `chart.setTheme()`；不直接操作 DOM 颜色、不写 `:root`。页面壳订阅 `WORKSPACE_EVENTS.CONFIG_CHANGE` 只同步自己的 `dataset.theme` 作为 `:has()` 兼容 fallback（纯配置，零样式变量）。`verify.mjs` 新增 3 条断言守住控件与配置链。CDP 实际点击验证 7/7：组件 `data-theme`、页面 `data-theme`、body 背景、`--sw-bg`、按钮文案与 active 状态在 light→dark→light 全程同步，0 JS 错误。
-
-**模块化加载 · 阶段一：数据按需派生（2026-11-21）**：建立 `src/workspace/module-catalog.ts` —— 12 个功能域模块声明 `requiresData` / `dependencies` / `presets` / `templateKeys` / `cssKeys` / `lifecycle`，内置 `full` / `intraday` / `candle` / `minimal` 四预设；`resolveModules()` 做依赖闭包与拓扑排序，`requiredDataFor()` 做数据依赖闭包，`registerModule()` 是将来新增模块的唯一扩展点。`WorkspaceConfig` 加 `modules` / `preset`，`?modules=` / `?preset=` 已可解析。
-
-- `deriveDataset(base, options?)` 按数据依赖闭包只派生被需要的数据集：只装分时图跳过筹码/多日/盘口派生，只装 K 线图跳过竞价/逐笔/委托/全景；`ChartDataset` 的 L1 派生字段改为可选。`loadDataset(base, options?)` 连**落盘分片也按需 fetch**（`minimal` 只请求 `manifest + bars + intraday`）。
-- **默认全开**：不传 options 等价于 `preset:'full'`，计算顺序与数值与改造前逐字段一致；示例页、8 场景截图、`verify.mjs` 全量 `derived.*` 断言零回归。
-- 验收：`check` 通过 / `test` **89/89**（新增 9 项按需派生行为测试）/ `build` 66 JS + 67 声明 / `verify.mjs` 新增默认全开一致性、minimal 裁剪、candle 裁剪、模块目录与扩展点断言。
-- **阶段二已完成**：DOM / CSS / 生命周期按需装载与 `?preset=` 在示例页的启用已于本阶段落地，页面不再无条件全量装载（详见下节）。
-
-**模块化加载 · 阶段二：DOM/CSS/生命周期按需装载（2026-11-21 已落地）**：`src/workspace/template.ts` 把全量 `WORKSPACE_TEMPLATE` 拆成 **12 个有序 DOM 片段**、把全量 `WORKSPACE_CSS` 用顶格 `@module:key` 标记切成 **13 段 CSS 片段**，导出 `buildWorkspaceTemplate(moduleIds)` / `buildWorkspaceCSS(moduleIds)` 两个纯函数 —— 前者按启用模块 `templateKeys` 并集 + 切片 `moduleIds` 决定 DOM 片段输出，后者按 `cssKeys` 拼接 CSS 片段（`registerCssSegment(key, css)` 可注册自定义 CSS 片段），`full` 预设下输出与两个全量常量**逐字符一致**（**默认全开零回归**，硬约束）。`<stock-workspace>` 在 `connectedCallback` 用 `resolveModules({ modules, preset })` 得到启用清单，据此装载 DOM/CSS，`mountLifecycles()` / `syncAll()` **按 `MODULE_CATALOG[id].lifecycle` 查映射表挂载生命周期**（head / controls / detail，未启用模块不挂载、其 cleanup 不登记）；配置里 `modules` / `preset` 变化时 `rebuildModules()` 清理旧生命周期 → 重建 DOM/CSS → 重挂生命周期 → 微任务重放完整配置与已有数据。`src/core/chart-context.ts` 与 `src/architecture/main-canvas-layout.ts` 补 **0 个副图兜底**（`hasIndicatorPane` 守卫，无 `indicator-pane` 时不再强制保留首个副图），使 `minimal` 预设不会因副图区空白报错。示例页 `index.html` 把 `cfg.modules` / `cfg.preset` 传给 `loadDataset()`，`?preset=full|intraday|candle|minimal` 现已真正生效；新模块须显式列入 `modules` 才启用，届时其 DOM / CSS / 生命周期由上述数据驱动链路自动落地。
-
-- **CDP 实测 4 个 `?preset=` 场景读数**：`full`（12 模块全开，DOM/CSS 与默认页逐字符一致）、`intraday`（无 `chip-pane`）、`candle`（无 `auction-pane` / `depth-book` / `#tape-home`）、`minimal`（仅 `.hdr-left` + `price-pane` + 主画布，无副图 / 工具条 / 交易明细，副图区按 0 副图兜底收缩）；4 个场景均 **0 JS 错误**，DOM 节点与 CSS 规则数随预设递减，不带参数的默认页与 `full` 视觉零差异。
-- 验收：`check` 通过 / `test` **97/97**（新增 8 项模板/CSS 裁剪行为测试）/ `build` 66 JS + 67 声明 / `npm pack --dry-run` 成功；`verify.mjs` 新增构建函数存在、页面接入、0 副图守卫与运行时裁剪断言。
-
-**日 K 线图查看历史分时（2026-11-22）**：双击日 K 蜡烛或用 K 线工具栏「历史分时」下拉选中某交易日，即在详情覆盖视图新增的「分时」tab 内以**独立 `<stock-chart mode="intraday">` 实例**渲染该日分时，与主图的 `priceScale`/时间轴/竞价列/盘口完全隔离，不误用当日昨收与当日集合竞价。
-
-- **数据边界**：公开接口一般只提供当日或最近几日分时，故默认索引仅覆盖近 5 个交易日（`intradayMulti` 派生）；末日 `2026-11-13` 为真实分时，前 4 日由当日日 K 的 OHLC 确定性拟真并锚定对应日 K 量额。视图内**不展示任何来源 / 示意说明**，一律以实际数据为准；读不到该日数据时不进入历史分时界面，只在图表区中央显示一张 3 秒自动消失的「无数据」浮层卡片（不占文档流、不挤动界面，同一日期只提示一次），**不凭空合成 935 天假行情**。
-- **标准注入接口**：`workspace.data.historicalIntraday` 为按 `tradeDate` 索引的 `Record<string, HistoricalIntradaySeries>`（含 `points` / `preClose` / `source`），消费者有授权历史分时可直接注入，`deriveDataset()` 原样保留、不覆盖；组件不落盘、不读路径。
-- **链路**：双击 → `historical-intraday-request { tradeDate, barIndex, source }` → `patchConfig({ historicalIntradayDate, tapeSet:'intraday', tapePlacement:'detail' })` → `DetailSet` 新增 `'intraday'` → `renderHistoricalIntraday()` 内嵌实例；`?historical-intraday=YYYY-MM-DD` 与 `?tape-set=intraday` 走同一配置链。
-- **模块化**：新增第 13 个模块 `historical-intraday`（`requiresData:['intradayMulti','bars']`、加入 `MODULE_PRESETS.full/candle`），`templateKeys`/`cssKeys`/`lifecycle` 数据驱动落地；`minimal`/`intraday` 预设不装该模块，不做多余派生。
-- 验收：`check` 通过 / `test` **124/124** / `build` 81 JS + 82 声明 / CDP 三场景（拟真日 / 末日真实 / 超范围提示）0 JS 错误。
-
-**历史分时视图能力补齐（2026-11-22）**：历史分时覆盖视图现在与主图保持一致的观察能力——左侧集合竞价列、与主图相同的副图配置（`subplotCount` / `subplotIndicators` 动态创建 3 个 `indicator-pane`）、右侧逐笔明细侧栏（`<trade-tape slot="side">` 替代 `<depth-book>`，**不显示十档盘口档位**）。
-
-- 竞价由 `buildAuctionSeries(dayBars, points, tradeDate)` 现场生成：`bars` 截到该历史日（末根即当日）以取真实 `open`/`close`/`preClose` 端点，9 秒级中间节点按上交所三原则撮合示意；逐笔由 `buildTradeSeries(points, tradeDate)` 按分钟量额锚定该日分时生成，补 `trend` 后喂侧栏。两者都是**只在选中日计算一次**的示意数据，`HistoricalIntradaySeries` 新增可选 `auction` / `trades` 字段，消费者注入授权数据时原样使用、不覆盖。
-- 视图顶部两条来源说明显式标注：分时来源（真实/拟真/授权/自定义）+「竞价锚定真实端点 + 三原则示意（9 秒过程需 L2 授权）· 逐笔按分钟量额锚定的合并分笔示意 · 侧栏不含十档盘口」，延续「不冒充真实历史行情」的数据原则。
-- mini 实例改为 `flex:1` 占满覆盖视图（不再固定 420px），竞价刻度与 3 个副图标签不再挤压；独立实例的事件隔离与 WebGL context 清理保持不变。
-
-**历史分时视图交互补齐（2026-11-22）**：覆盖视图 tab 文案由「分时」改为「**历史分时**」（消除与工具栏分时模式按钮的歧义，`detailLabel()` 早已是该文案）。视图顶部来源条右侧新增两个按钮：
-
-- **「竞价：开 / 关」** → `config.historicalAuctionEnabled`（默认开，`?historical-auction=off` 可复现）。与主图 `auctionEnabled` **独立**：主图竞价按钮在 K 线模式隐藏、语义绑主图，故历史分时视图用独立字段 + `patchConfig`，由 `applyHistoricalViewState()` 下沉到 mini 的 `auction` 属性。
-- **「展开逐笔明细 / 收起逐笔明细」** → `config.historicalTapeExpanded`（默认收起，`?historical-tape-expanded=1` 可复现）。展开态改为**全宽多栏连续时间线**（与当日「打开逐笔明细」一致）：按 `detailGroupCount(width)` 分 1~6 栏，每栏一个 `trade-tape` 用 `setWindow()` 承接一段连续数据，顶部组标题标注「栏号 · 时间范围 · 条数」，底部「共 N 条 · M 栏连续时间线 · 第 X–Y 条」计数 +「滚轮切换」提示；同屏可见 M × 每栏行数（实测 5 栏 × 22 行 = 110 条）。面板 `z-index:10` 覆盖内容区（需高于 mini 内部 `#pane-bars` 的 5，否则副图信息栏会透出），不新增覆盖层、不碰 `stock-chart` 的私有 `sideSlot`、不复用 `applySideExpanded`。
-
-`renderHistoricalIntraday` 的「同日短路」改为仍执行 `applyHistoricalViewState()`，保证任意 config 变更都能同步竞价/展开态而不重建 WebGL context。
-
-**逐笔展开改为多栏连续时间线（2026-11-22）**：初版「放大单个逐笔表」不符合「像实时当天一样查看更多数据」的诉求，已改为全宽分栏：`buildHistoricalTapeGroups()` 按容器宽度建 N 栏、`renderHistoricalTapeWindow()` 按共享 `histFrom` 为每栏切一段连续时间线并标注时间范围，**滚轮切换**整体换屏；展开面板覆盖整个内容区并抬高 z-index 盖住 mini 的副图信息栏。CDP 实测 `1/5 · 09:25:00–09:38 · 22 条` … `5/5 · 10:15–10:26 · 22 条`，「下一屏」切到 `第 111–220 条`，0 JS 错误。
-
-**多栏逐笔改为滚轮切换（2026-11-22）**：去掉「上一屏 / 下一屏」按钮，改为与当日 `cover-scroll` 完全一致的透明滚动层机制——`.hist-tape-scroll`（`overflow-y:auto`、隐藏滚动条、`z-index:1`）内含 spacer（高度 `max(0,total-n*L+L)*rowH`），多栏 grid 设 `pointer-events:none` 让滚轮穿透；`scroll` 事件把 `scrollTop` 换算成共享起始行 `histFrom = floor(scrollTop/rowH)`，`renderHistoricalTapeWindow()` 让所有栏同步换段并回写 `scrollTop` 防漂移。CDP 实测 spacer 6876px / 视口 428px，滚动 360px → 第 21–130 条、1800px → 第 101–210 条，5 栏时间范围同步递进、0 JS 错误。
-
-**模块化按需加载再复核（2026-11-22）**：31 组模块组合矩阵实测后，修复 8 类半装载/残留，并把「模块级归属」与「静态可寻址子路径」补齐。
-
-- **模板切片模块级归属**：`TEMPLATE_SLICES` 由「keys all-of + 写死 moduleIds 白名单」改为 `id / owners / always / after` 的 17 个切片，`templateSliceEnabled()` 按启用模块判定；大 `.chart-header` 切片拆为 header / toolbar / intraday-tools / candle-tools / hist-intraday-tools 等，使 `price-candle` 不再零产出、`sel-historical-intraday` 不再在未启用时残留、`chart-tools` 不再被别的模块带出。新增 `registerTemplateSlice()` 与 `WorkspaceModuleDef.templateSlices`，新模块可登记独占 DOM。
-- **生命周期可注册**：`LIFECYCLE_HOOKS` 改可变 Map + `registerLifecycle()`，未知值告警而非静默丢弃；`depth-book`/`trade-tape` 补自身 `depth`/`tape` 生命周期（复用 `mountSideData`/`syncSideData`），单独启用不再「有 DOM 无行为」。`restoreTapeCard()` 不再向无 tapeCard 的模板补隐藏寄主；`trade-tape` 补 `orders` 依赖使 `ordIds` 完整。
-- **拆 candle 预设**：`candle` 精简为 6 模块真按需（不再派生 9/10 数据键），新增 `candle-full` 承载历史分时及其依赖链；预设总数 4 → **5**。
-- **静态可寻址子路径**：新增 `src/modules/<id>.ts` 13 个薄聚合门面（`MODULE_ID` + `descriptor` + 该模块相关 API），`package.json` 补 `./workspace/*` 与 `./modules/*` exports，根入口补 `registerTemplateSlice`/`registerLifecycle` 导出。**保留根入口静态全导出与 `defineAll()` 同步注册**（零 breaking change）；不做运行时懒注册——`connectedCallback` 不能 async、会破坏 READY 时序与首屏布局。
-- **门禁**：新增 `scripts/tests/module-matrix.test.mjs`（13 单模块 × 独占 DOM/数据/依赖拓扑、未启用标记不残留、5 预设、full 恒等、任意组合、扩展点）与 `module-paths.test.mjs`（13 子路径可独立 import）；`test` **124/124**。
-
-**历史分时说明精简与无数据拦截（2026-11-23）**：按用户要求去掉视图顶部两行与功能无关的说明（日期/来源条 + 竞价/逐笔示意说明），改为只保留一条功能按钮条（竞价开关 / 展开逐笔明细）。`syncDetail` 新增 `hasHistoricalSeries()` 前置判断：只有索引里确有该日且带有效分钟点才打开覆盖视图；读不到数据时**不进入历史分时界面**，仅在 `<stock-workspace>` 的 `.chart-card` 顶部显示一条轻量「无数据 · YYYY-MM-DD」横幅（常驻直到切换有效日期），并把 `tapeSet:'intraday'` 回退为 `trades` 避免空视图。CDP 实测超范围日期 `cover=false`、说明条 0、横幅可见且 0 JS 错误；切到有效日期后横幅消失、视图正常打开。
-
-**历史分时主题切换修复（2026-11-23）**：此前新增的历史分时内嵌 `<stock-chart>` 是独立实例，从未调用 `setTheme()` —— CSS 变量虽继承了根组件的 `--sw-*`（DOM 跟随暗色），但 WebGL 画布走实例级 `ctx.palette`，停留在默认浅色色板，导致暗色主题下「DOM 暗、画布亮」。现于 `applyHistoricalViewState()` 按 `config.theme` 下沉 `mini.setTheme(theme)`（带 `miniTheme` 签名缓存避免重复），使 mini 的 18 色色板与 host 的 `--sw-*` 与根组件严格同源；创建、主题按钮点击、`?theme=dark`、展开逐笔四条路径均验证同步。CDP 实测切换后 `miniPalette.background=#14181E`、`miniPalette.up=#F26A66`、`--sw-bg=#14181E`，截图目视确认折线/均价线/竞价列/3 副图/逐笔侧栏全部暗色、无浅色残留。
-
-**无数据提示优化（2026-11-23）**：原顶部横幅会占文档流、把头部行情往下推挤且常驻不消失。现改为 `.chart-card` 内 `position:absolute` 的中央浮层卡片（圆角/边框/阴影，与工具栏控件明显区分），**3 秒自动移除**；`showNoDataHint` 用 `noDataDate` 保证同一日期只弹一次（其它 config 变更不重弹），切换到有效日期后清除签名，再次选中无数据日期可重新提示。CDP 实测提示出现/消失前后 `.chart-card` 高度 680.39px 与 `.chart-header` y=137.375 完全一致（零位移），0 JS 错误。
-
-**展开明细提示栏精简（2026-11-23）**：按用户截图去掉历史分时展开逐笔后顶部的「逐笔明细 · 多栏连续时间线」提示栏（`.hist-tape-head` 元素与 CSS 一并删除），tab 栏下直接显示功能按钮与 5 栏组标题；底部计数条与「滚轮切换」提示保留。去掉该行腾出的高度让每栏可见行数由 22 → **26**，同屏可看 130 条（原 110 条）。CDP 实测 5 栏、滚轮 1800px → 第 101–230 条、0 JS 错误。
-
-**多栏逐笔最后一行遮挡修复（2026-11-23）**：`buildHistoricalTapeGroups` 原先在布局未稳定时算一次 `histL`，且因「栏数不变直接 return」跳过 rAF 二次重算，导致每栏切了 26 行而视口只够 24.5 行，最后一行被 `.view` 的 overflow 裁成半截。现改为：栏数不变时仍按当前视口重算 `histL`，并在 `renderHistoricalTapeWindow` 每次渲染前用 `visibleRows()` 校准（视口高度非 `rowH` 整数倍时只取可完整显示的行），L 变化时同步 `updateHistoricalSpacer()`。CDP 实测每栏 24 行、视口底 781.4px / 末行底 771.2px（`fullyVisible=true`），滚轮 1800px → 第 101–220 条，0 JS 错误。
-
-**多栏逐笔视口与行高精确对齐（2026-11-23）**：按用户要求「列表项高度与其它列表一致、不留白、不裁半行，可在底部计数条上调整高度」。新增 `fitHistoricalTapeFoot()`：每次先把底部计数条 `padding-bottom` 恢复 CSS 基准（6px），量出未调整视口高 `viewH`，算可完整显示行数 `L = floor(viewH / LAYOUT.rowH)`，再把余数 `viewH - L*rowH` 补到 `padding-bottom`（本次 10px → 16px）。行高保持 `18px` 不变，视口恰好 `432 = 24×18`，`gap=0`；每次从基准重算，滚轮切换不累积，幂等。CDP 实测 `rows=24 / rowH=18 / viewH=432 / ideal=432 / gap=0 / lastGap=0.22px / footH=44.4px`，0 JS 错误。
-
-**两套逐笔视图样式统一与严格对齐（2026-11-23）**：按用户要求「行高与其它列表一致、上方工具栏等高、严格匹配、风格统一」。① 删掉历史视图 `.hist-tape-grid .group-head` 的独立规则，与当日共用 `.detail-cover .group-head` 并固定 `height:26px`；② 给 `.detail-cover trade-tape` 统一 `--sw-bar-h:24px`，消除两套因 CSS 变量作用域不同造成的表头 28 / 24 差异；③ 新增 `fitCoverBar()` 在 `openDetail` 阶段按统一几何（`TAPE_CHROME_H=26+24`、行高 18）把视口余数吸收到共享 `.cover-bar` 的 `padding-bottom`，所有 tab 的 cover-bar 严格等高；历史视图再由 `fitHistoricalTapeFoot()` 吸收自身余数。CDP 实测两视图 `barH=46 / tabs=24 / groupHead=26 / tapeHead=24 / rowH=18` 全部相同，`view=28×18=504`（当日）与 `24×18=432`（历史）均 `gap=0`、`lastGap≈0`，0 JS 错误。
-
-**全景盘口底部严格对齐（2026-11-23）**：与两套逐笔视图同构，新增 `fitPanoramaViewport()` 把 `.pano-list` 视口的不足一行余数（实测 3px）吸收到全景专属 `.pano-mid` 信息行的 `padding-bottom`（6 → 9px）。行高仍是 18px（与逐笔一致）、共享 `.cover-bar` 不动（三视图保持 46px 等高），列表严格 `432 = 24×18`、`gap=0`。CDP 实测首次渲染与「逐笔→全景」切换后均 `listH=432 / gap=0 / barH=46`，0 JS 错误。
-
-**历史分时右侧栏底部对齐（2026-11-23）**：收起态 mini `<stock-chart>` 侧栏 `<trade-tape slot="side">` 的 `.view` 高 496px、行高 18px，只能完整显示 27 行（486px），余 10px 造成底部半行。修复：`trade-tape.renderShell()` 的 `.view` 高度改为 `calc(100% - bar - var(--sw-view-extra, 0px))`；`detail.ts` 新增 `fitHistoricalSideTape()` 用「当前视口 + 已扣减值」反推基准视口、算出 extra 并设到 tape 元素的 `--sw-view-extra`（动态 CSS 变量，无需重建 shadow DOM），配 `ResizeObserver` 观察 tape 自身（其高度不受该变量影响，不会循环）在布局稳定后自动收敛。行高 18px、表头 24px、共享 `.cover-bar` 46px 全部不变。CDP 实测收起/展开态 `viewH=486 = 27×18 / gap=0 / fullyVisible=27`，当日逐笔与全景盘口 `barH=46` 未回归，0 JS 错误。
-
-**底栏内容垂直居中修复（2026-11-23）**：用户指出底部「共 470 条 · 5 栏连续时间线 · 第 1–120 条」没有垂直居中。根因是 `fitHistoricalTapeFoot` / `fitCoverBar` / `fitPanoramaViewport` 都把视口余数**只加到 `padding-bottom`**（如底部计数条 6→16px、顶部仍 6px），内容被推偏上。现抽共享 `applyBalancedPadding(el, extra)`：每次先清空 inline padding 回 CSS 基准，把 extra 对称分到 `padding-top`（`ceil(extra/2)`）与 `padding-bottom`（`floor(extra/2)`），总高仍恰好增加 extra（严格对齐不回退），而内容因 `align-items:center` 保持垂直居中。CDP 实测底栏 `padding 8/7px`、文字中心偏差 1px（亚像素）；共享 cover-bar `10/10px`、偏差 0.5px；`gap=0`、`barH=46` 保持，0 JS 错误。
-
-> 本项目为前端组件工程示例，示例标的仅用于验证数据结构与渲染，不构成投资建议。
+> 本项目为前端组件工程示例，非投资建议；示例数据仅供演示，详见 `src/data/SOURCES.md`。

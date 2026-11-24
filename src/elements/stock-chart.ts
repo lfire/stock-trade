@@ -128,7 +128,7 @@ export class StockChart extends HTMLElement {
     this.prepend(overlay);
     this.prepend(canvas);
 
-    // 右侧 DOM 侧栏：内含页面提供的 <depth-book> 与挂载进来的明细卡片，重连时复用不销毁
+    // 右侧 DOM 侧栏：内含模板提供的 <depth-book> 与挂入的明细卡片，重连时复用不销毁
     if (!this.sideSlot) {
       const sideSlot = document.createElement('div');
       sideSlot.style.cssText = 'position:absolute;z-index:3;background:var(--sw-bg,#fff);border-left:1px solid var(--sw-line,#E3E6EB);box-shadow:-2px 0 10px rgba(31,35,41,.05);overflow:hidden;box-sizing:border-box;display:none;flex-direction:column';
@@ -136,7 +136,7 @@ export class StockChart extends HTMLElement {
       const statsEl = document.createElement('div');
       statsEl.style.cssText = 'height:100%;overflow:auto;padding:6px 8px;box-sizing:border-box;font:11px/1.6 system-ui,-apple-system,sans-serif;color:var(--sw-text,#1F2329)';
       sideSlot.appendChild(statsEl);
-      // 分时模式右列下半部：交易明细，由页面把卡片挂进来
+      // 分时模式右列下半部：交易明细，由 workspace 经公开 API 挂入
       const tradeHost = document.createElement('div');
       const tapeMin = LAYOUT.titleH + LAYOUT.headH + LAYOUT.rowH;
       tradeHost.style.cssText = `flex:1 1 32%;min-height:${tapeMin}px;overflow:hidden;display:none;flex-direction:column`;
@@ -147,7 +147,7 @@ export class StockChart extends HTMLElement {
     }
     const sideEl = this.querySelector('[slot="side"]') as DepthSlotElement | null;
     // 盘口必须位于侧栏最上方（statsEl / tradeHost 之后）；prepend 对已在首位的元素是 no-op，
-    // 首次连接把页面提供的节点搬进来，重连时也不会被挤到末尾。
+    // 首次连接把模板提供的节点搬进来，重连时也不会被挤到末尾。
     if (sideEl && sideEl !== this.sideSlot.firstElementChild) this.sideSlot.prepend(sideEl);
     this.depthEl = sideEl || null;
     // 底部条 hidden 变化（明细展开/收起）后自动重算：页面无论先改 hidden 还是先调
@@ -253,7 +253,7 @@ export class StockChart extends HTMLElement {
     this.ctx?.destroy();
     this.ctx = null;
     // 只移除每次连接都会重建的节点；sideSlot / statsEl / tradeHost / depthEl 保留，
-    // 因为其中含页面提供的 <depth-book> 与挂载进来的明细卡片，销毁会丢内容。
+    // 因为其中含模板提供的 <depth-book> 与挂入的明细卡片，销毁会丢内容。
     for (const el of [this.canvas, this.overlay, this.barsStyle, this.paneBars]) el?.remove();
     this.canvas = this.overlay = this.barsStyle = this.paneBars = null;
   }
@@ -327,7 +327,6 @@ export class StockChart extends HTMLElement {
     if (this.sideExpanded) this.depthEl.style.flex = this.depthFlex();
   }
 
-  /** 由 ChartContext.applyLayout 回调，定位右侧 DOM 侧栏并按模式切换内容 */
   /** 侧栏内展开成交明细：十档收缩为 1 档，明细占满剩余高度 */
   setSideExpanded(on: boolean) {
     this.sideExpanded = !!on;
@@ -357,8 +356,11 @@ export class StockChart extends HTMLElement {
       this.depthEl.setCompact?.(!chips && !!this.sideExpanded);
     }
     if (this.sideTradeEl) {
-      this.sideTradeEl.style.display = chips ? 'none' : 'flex';
-      this.sideTradeEl.style.flex = chips ? '' : this.tradeFlex();
+      // 当侧栏首元素是 <trade-tape> 时没有明细卡片寄主；
+      // tradeHost 自带 min-height:66px，留着会在列表底部撑出空白。
+      const tapeOnly = this.depthEl?.tagName.toLowerCase() === 'trade-tape';
+      this.sideTradeEl.style.display = chips || tapeOnly ? 'none' : 'flex';
+      this.sideTradeEl.style.flex = chips || tapeOnly ? '' : this.tradeFlex();
     }
     if (this.statsEl) {
       this.statsEl.style.display = chips ? 'block' : 'none';
@@ -567,7 +569,7 @@ export class StockChart extends HTMLElement {
   setAuctionHover(index: number | null) { this.ctx?.setAuctionHover(index); }
   setClosingHover(index: number | null) { this.ctx?.setClosingHover(index); }
 
-  /** 页面提供的明细卡片 / 覆盖层统一经 API 挂载，不接触内部节点 */
+  /** 明细卡片 / 覆盖层统一经公开 API 挂载，不接触内部节点 */
   attachDetailCard(card: HTMLElement) {
     if (card && this.sideTradeEl && card.parentElement !== this.sideTradeEl) this.sideTradeEl.appendChild(card);
   }
