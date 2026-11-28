@@ -11,6 +11,7 @@
  *  - ResizeObserver 在尺寸变化时重算；disconnectedCallback 统一清理。
  * 事件统一走 emitEvent（bubbles + composed），遵守全仓事件单一真源约定。
  */
+import { BaseElement } from './ssr-base';
 import { DetailCanvasLayout } from '../architecture/detail-canvas-layout';
 import type { DetailLayoutInput, DetailSet } from '../architecture/detail-canvas-layout';
 import { MODULE_REGISTRY } from '../architecture/registry';
@@ -27,6 +28,7 @@ const REGION_SELECTORS: Readonly<Record<string, string>> = Object.freeze({
   'cover-scroll': '.cover-scroll',
   'cover-scroll-spacer': '.cover-scroll-spacer',
   'cover-count': '.cover-count',
+  'cover-view': '.cover-view',
   'cover-body': '.cover-body',
 });
 
@@ -40,7 +42,13 @@ const DETAIL_SKELETON = `
         <button type="button" data-set="intraday">历史分时</button>
       </span>
       <span class="cover-count"></span>
-      <button type="button" class="cover-back">返回图表 ›</button>
+      <span class="cover-right">
+        <span class="cover-view" role="group" aria-label="逐笔展示模式">
+          <button type="button" data-view="list" title="普通逐笔列表"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 3h8M2 6h8M2 9h8"/></svg>列表</button>
+          <button type="button" data-view="match" title="按买单 / 卖单合并连续成交"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="1.5"/><path d="M6 1.5v9M6 6h4.5"/></svg>买卖单</button>
+        </span>
+        <button type="button" class="cover-back">返回图表 ›</button>
+      </span>
     </div>
     <div class="cover-body">
       <div class="cover-scroll"><div class="cover-scroll-spacer"></div></div>
@@ -67,7 +75,7 @@ export interface DetailModuleEvent {
 const finite = (v: unknown, fallback: number): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 
-export class DetailCanvas extends HTMLElement {
+export class DetailCanvas extends BaseElement {
   private readonly layout: DetailCanvasLayout = new DetailCanvasLayout();
   private snapshot: LayoutSnapshot | null = null;
   private ro: ResizeObserver | null = null;

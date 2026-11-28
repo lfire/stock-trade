@@ -124,6 +124,14 @@ test('历史日逐笔：按分钟量额锚定分时，含 trend 后可喂 trade-
   const points = d.intradayMulti.filter((p) => p.tradeDate === day);
   const trades = buildTradeSeries(points, day);
   assert.ok(trades.length > 0);
+  // 市面口径：9:25 竞价成交 = 该日首个分钟点量额（不再写死），逐笔总量 === 分时总量
+  const auc = trades.filter((t) => t.phase === 'auction');
+  assert.equal(auc.length, 1);
+  assert.equal(auc[0].volume, points[0].volume, '9:25 竞价成交量须取该日首个分钟点');
+  assert.equal(auc[0].amount, points[0].amount);
+  const sum = (arr) => arr.reduce((s, x) => s + x.volume, 0);
+  assert.equal(sum(trades), sum(points), '逐笔总量须等于分时总量（无重复计数、无盘后造量）');
+  assert.equal(trades.filter((t) => t.time.startsWith('09:30')).length, 0, '09:30 分钟已由竞价成交表示');
   assert.ok(trades.every((t) => Number.isFinite(t.timestamp) && Number.isFinite(t.price)));
   const rows = trades.map((t, i, arr) => {
     const diff = t.price - (i === 0 ? d.bars.find((b) => b.tradeDate === day).preClose : arr[i - 1].price);

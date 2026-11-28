@@ -73,7 +73,10 @@ test('tsc 自动生成的声明覆盖入口导出的类与关键 API', () => {
     assert.ok(new RegExp(`\\b${name}\\b`).test(stockDts), `stock-chart.d.ts 缺少 ${name}`);
   }
   assert.ok(!read('dist/elements/pane-base.d.ts').includes('PaneElementBase'), '仍有幽灵基类导出');
-  assert.ok(/class AuctionPane extends HTMLElement/.test(auctionDts), 'AuctionPane 继承声明错误');
+  // SSR 安全：声明为 extends BaseElement，BaseElement 的类型必须是 typeof HTMLElement（实例即 HTMLElement）
+  assert.ok(/class AuctionPane extends BaseElement/.test(auctionDts), 'AuctionPane 继承声明错误');
+  const ssrBaseDts = read('dist/elements/ssr-base.d.ts');
+  assert.ok(/declare const Base: typeof HTMLElement/.test(ssrBaseDts), 'BaseElement 未声明为 typeof HTMLElement');
 });
 
 test('事件映射与 CHART_EVENTS 常量表双向一致', () => {

@@ -6,12 +6,14 @@ import { PALETTE, AXIS_GUTTER_L } from '../types';
 import { adaptiveMAPeriods } from '../core/indicator-params';
 import { intradayVolumeRatioSeries } from '../compute/indicators';
 import { pickUnit } from '../algorithms/format';
+import { getSubplotIndicator, subplotAvailableIn } from '../core/subplot-indicators';
 import type { ChartContext } from '../core/chart-context';
 import type { Bar, IntradayPoint, OverlayTextItem } from '../types';
 
 interface IndicatorPoint {
   value: number | null;
   up?: boolean;
+  prev?: number;
   macd?: number | null; dif?: number | null; dea?: number | null;
   k?: number; d?: number; j?: number;
   [key: string]: unknown;
@@ -38,6 +40,9 @@ export class IndicatorPane extends PaneElement {
     paneBg(out, r, rows, ctx.leftInset());
     const name = (this.getAttribute('indicator') || 'VOL').toUpperCase();
     const isIntraday = ctx.mode === 'intraday';
+    // 扩展副图（注册表）：当前模式不适用时只保留背景网格
+    const ext = getSubplotIndicator(name);
+    if (ext && !subplotAvailableIn(ext, ctx.mode)) { this.axis = undefined; return out; }
     // 半小时竖网格与主图共用同一组 x，保证主副图上下对齐
     if (isIntraday) {
       const gc = rgba(PALETTE.grid);
@@ -45,7 +50,11 @@ export class IndicatorPane extends PaneElement {
     }
     let res: IndicatorResult, vis: IndicatorPoint[];
 
-    if (isIntraday && name === 'VOL_RATIO') {
+    if (ext) {
+      // 扩展指标：描述符给出与主图序列等长的 series，副图只做视口裁剪与通用绘制
+      res = ext.series(ctx) as IndicatorResult;
+      vis = res.values.slice(ctx.viewport.start, ctx.viewport.end);
+    } else if (isIntraday && name === 'VOL_RATIO') {
       // 分时量比曲线：逐点按当日累计开市分钟归一化，不再拿日线序列末 N 个凑数
       const pts = ctx.getSeries() as IntradayPoint[];
       const daily = ctx.dataset?.bars || [];
@@ -151,6 +160,31 @@ export class IndicatorPane extends PaneElement {
         const pts = vis.map((v, i) => [xAt(i), y(v[key] as number)]);
         polyline(out, pts, 1.3, rgba(colors[key]));
       }
+    } else if (res.type === 'compare') {
+      // 通用对照渲染器：当前实线 + 对照半透明曲线，共用同一纵轴上限
+      let hi = 0;
+      for (const v of vis) hi = Math.max(hi, v.value ?? 0, v.prev ?? 0);
+      const y = makeScale(0, hi || 1, top, bottom, 0.02);
+      this.axis = { lo: 0, hi: hi || 1, name: ext?.axisUnit ?? name, top, bottom, pad: 0.02 };
+      line(out, pr.x, bottom, pr.x + pr.w, bottom, 1, rgba(PALETTE.grid));
+      const curPts: number[][] = [], prevPts: number[][] = [];
+      vis.forEach((v, i) => {
+        const x = xAt(i);
+        if (v.value != null) curPts.push([x, y(v.value)]);
+        prevPts.push([x, y(v.prev ?? 0)]);
+      });
+      polyline(out, prevPts, 1.3, rgba(PALETTE.chipLoss, 0.85));
+      polyline(out, curPts, 1.5, rgba(PALETTE.avg));
+    } else if (ext && res.type === 'line') {
+      // 通用折线渲染器（仅扩展指标；内置 VOL_RATIO 仍走下方带 1 基准线的分支）
+      let lo = Infinity, hi = -Infinity;
+      for (const v of vis) { if (v.value != null) { lo = Math.min(lo, v.value); hi = Math.max(hi, v.value); } }
+      if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
+      const y = makeScale(lo, hi, top, bottom);
+      this.axis = { lo, hi, name: ext.axisUnit ?? name, top, bottom, pad: 0.08 };
+      const pts: number[][] = [];
+      vis.forEach((v, i) => { if (v.value != null) pts.push([xAt(i), y(v.value)]); });
+      polyline(out, pts, 1.5, rgba(PALETTE.avg));
     } else {
       let lo = Infinity, hi = -Infinity;
       for (const v of vis) { lo = Math.min(lo, v.value!); hi = Math.max(hi, v.value!); }

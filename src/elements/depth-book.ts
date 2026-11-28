@@ -1,11 +1,13 @@
 // 十档盘口：DOM 表格，支持 5/10 档切换与「普通 / 涨停 / 跌停」三种盘口场景。
 // 涨跌停时一侧无挂单，用提示条代替多行空档，并把封单档高亮。
+import { BaseElement } from './ssr-base';
 import { LAYOUT } from '../types';
 import { emitEvent, CHART_EVENTS } from '../events';
 import type { DepthLevel, DepthUnit, DepthBookSnapshot } from '../types';
 import { trim } from '../algorithms/format';
+import { depthSideRatio } from '../algorithms/depth-ratio';
 
-export class DepthBook extends HTMLElement {
+export class DepthBook extends BaseElement {
   declare snap: DepthBookSnapshot | null;
   declare compact: boolean;
   declare levels: number;
@@ -78,7 +80,8 @@ export class DepthBook extends HTMLElement {
 
     // 卖档区：涨停时无卖盘，用一条提示代替多行空档
     if (lim === 'limitUp') {
-      rows.push(`<div class="limit-note up">涨停 ${limitPx.toFixed(2)} · 无卖盘</div>`);
+      rows.push(`<div class="limit-area" style="height:${levels * LAYOUT.rowH}px">`
+        + `<div class="limit-note up">涨停 ${limitPx.toFixed(2)} · 无卖盘</div></div>`);
     } else {
       for (let i = levels - 1; i >= 0; i -= 1) {
         const a = asks[i];
@@ -87,11 +90,24 @@ export class DepthBook extends HTMLElement {
           : emptyRow('ask', `卖${i + 1}`));
       }
     }
-    // 买卖盘之间只用一条细分隔线，不再显示「E · 买卖分界」文字行
-    rows.push('<div class="split"></div>');
+    // 买卖分界：买卖占比红绿柱，只统计当前可视档位（涨停无卖盘 / 跌停无买盘按 0 计），口径随量 / 额
+    const ratio = depthSideRatio(
+      lim === 'limitDown' ? [] : bids.slice(0, levels),
+      lim === 'limitUp' ? [] : asks.slice(0, levels),
+      this.unit,
+    );
+    // 无挂单时只保留中性底色；有挂单时红（买）绿（卖）按占比分段，不显示文字与数值。
+    // 只渲染非零段（涨停 / 跌停时为单色满条），用 flex-grow 按比例分配，中间 1px 间隙不影响比例
+    const buyPct = ratio.buyRatio == null ? null : Math.round(ratio.buyRatio * 1000) / 10;
+    const seg = (cls: string, pct: number) => (pct > 0 ? `<i class="${cls}" style="flex:${pct} 1 0"></i>` : '');
+    rows.push(buyPct == null
+      ? '<div class="split"><span class="ratio"></span></div>'
+      : `<div class="split" aria-label="买盘占比 ${buyPct}%"><span class="ratio">`
+        + `${seg('buy', buyPct)}${seg('sell', Math.round((100 - buyPct) * 10) / 10)}</span></div>`);
     // 买档区：跌停时无买盘
     if (lim === 'limitDown') {
-      rows.push(`<div class="limit-note down">跌停 ${limitPx.toFixed(2)} · 无买盘</div>`);
+      rows.push(`<div class="limit-area" style="height:${levels * LAYOUT.rowH}px">`
+        + `<div class="limit-note down">跌停 ${limitPx.toFixed(2)} · 无买盘</div></div>`);
     } else {
       for (let i = 0; i < levels; i += 1) {
         const b = bids[i];
@@ -145,15 +161,24 @@ export class DepthBook extends HTMLElement {
         .row.bid .bar{background:color-mix(in srgb,var(--sw-up) 12%,transparent)}
         .row.sealed{font-weight:600;background:color-mix(in srgb,var(--sw-up) 8%,transparent)}
         .row.sealed .lbl{color:var(--sw-up)}
-        .limit-note{display:flex;align-items:center;justify-content:center;min-height:120px;
-                    margin:10px 8px;padding:8px 10px;border-radius:6px;text-align:center;
-                    font:11px/1.5 system-ui,-apple-system,sans-serif;font-weight:600}
+        /* 涨跌停提示占位恰为「档数 × 行高」，与正常档位等高，侧栏行均分与明细视口不被打破 */
+        .limit-area{display:flex;box-sizing:border-box;padding:6px 8px;overflow:hidden}
+        :host(.compact) .limit-area{padding:1px 6px}
+        .limit-note{flex:1 1 auto;display:flex;align-items:center;justify-content:center;min-width:0;
+                    padding:0 10px;border-radius:6px;text-align:center;white-space:nowrap;
+                    font:11px/1.2 system-ui,-apple-system,sans-serif;font-weight:600}
+        :host(.compact) .limit-note{border-radius:3px;font-size:10px}
         .limit-note.up{background:color-mix(in srgb,var(--sw-up) 10%,transparent);
                        color:var(--sw-up);border:1px solid color-mix(in srgb,var(--sw-up) 30%,transparent)}
         .limit-note.down{background:color-mix(in srgb,var(--sw-down) 10%,transparent);
                          color:var(--sw-down);border:1px solid color-mix(in srgb,var(--sw-down) 30%,transparent)}
-        .split{height:1px;background:var(--sw-line,transparent);
-               margin:calc((var(--sw-split-h,${LAYOUT.splitH}px) - 1px)/2) 6px}
+        /* 买卖占比柱：沿用原分隔线的总高 --sw-split-h，柱体左右顶边、无圆角，3px 垂直居中 */
+        .split{display:flex;align-items:center;height:var(--sw-split-h,${LAYOUT.splitH}px);box-sizing:border-box}
+        .split .ratio{flex:1 1 auto;display:flex;gap:1px;height:3px;min-width:0;overflow:hidden;
+                      background:var(--sw-line,transparent)}
+        .split .ratio i{display:block;height:100%;min-width:0}
+        .split .ratio .buy{background:var(--sw-up,#E24B4A)}
+        .split .ratio .sell{background:var(--sw-down,#1D9E75)}
       </style>
       <div class="title"><span class="lead">
         <span class="name">盘口</span>

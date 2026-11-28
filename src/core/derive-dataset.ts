@@ -24,6 +24,7 @@ import { buildChipDistribution } from '../algorithms/chip-distribution';
 import { buildIntradayMulti } from '../algorithms/intraday-multi';
 import { buildHistoricalIntraday } from '../algorithms/historical-intraday';
 import { buildTradeSeries } from '../algorithms/trade-series';
+import { assignTradeOrderNos } from '../algorithms/trade-order-runs';
 import { reduceOrderBook, linkFillsToTrades } from '../algorithms/order-book';
 import { buildDepthScenarios } from '../algorithms/depth-scenarios';
 import { resolveModules, requiredDataFor } from '../workspace/module-catalog';
@@ -48,6 +49,45 @@ function contextOf(manifest: Manifest): DeriveContext {
 function clockSec(s: string): number {
   const p = s.split(':').map(Number);
   return (p[0] || 0) * 3600 + (p[1] || 0) * 60 + (p[2] || 0);
+}
+
+/**
+ * 0) 可推导字段补齐（输入契约中标为「可选」的字段）：已有值一律原样保留、对象引用不变，
+ * 只在缺失时按市面口径计算——
+ *  - manifest：open / close 取当日日 K，limitRate 按代码 / 名称识别板块；
+ *  - bars：preClose 取上一根 close（首根取开盘价）、timestamp 取交易日 00:00 UTC、
+ *    change / pctChg / amplitude 由 preClose 计算、turnoverRate = volume ÷ floatShares。
+ */
+function hydrateManifest(m: Manifest, lastBar: Bar | undefined): Manifest {
+  const day = lastBar && lastBar.tradeDate === m.tradeDate ? lastBar : undefined;
+  const open = m.open ?? day?.open;
+  const close = m.close ?? day?.close;
+  const limitRate = m.limitRate ?? limitRateFor(m.symbol, m.name);
+  if (open === m.open && close === m.close && limitRate === m.limitRate) return m;
+  return { ...m, open, close, limitRate } as Manifest;
+}
+
+function hydrateBars(bars: Bar[], manifest: Manifest): Bar[] {
+  const fin = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const shares = manifest.floatShares;
+  let changed = false;
+  const out = bars.map((b, i) => {
+    if (fin(b.preClose) && fin(b.timestamp) && fin(b.change) && fin(b.pctChg)
+      && fin(b.amplitude) && (fin(b.turnoverRate) || !fin(shares))) return b;
+    changed = true;
+    const preClose = fin(b.preClose) ? b.preClose : (i > 0 ? bars[i - 1].close : b.open);
+    return {
+      ...b,
+      preClose,
+      timestamp: fin(b.timestamp) ? b.timestamp : Date.parse(`${b.tradeDate}T00:00:00Z`),
+      change: fin(b.change) ? b.change : r2(b.close - preClose),
+      pctChg: fin(b.pctChg) ? b.pctChg : r2(((b.close - preClose) / preClose) * 100),
+      amplitude: fin(b.amplitude) ? b.amplitude : r2(((b.high - b.low) / preClose) * 100),
+      turnoverRate: fin(b.turnoverRate) ? b.turnoverRate
+        : (fin(shares) && shares > 0 ? r2((b.volume / shares) * 100) : b.turnoverRate),
+    };
+  });
+  return changed ? out : bars;
 }
 
 /**
@@ -93,7 +133,7 @@ function hydrateIntraday(points: IntradayPoint[], manifest: Manifest): IntradayP
  * 取 volume/amount（其余节点为 0），补 source / priceBasis 兼容既有断言与文案。
  * 末点取归一化后的 intraday，保证与运行时分时严格闭合。
  */
-function deriveAuction(points: AuctionPoint[], intraday: IntradayPoint[]): AuctionPoint[] {
+function deriveAuction(points: AuctionPoint[], intraday: IntradayPoint[], tradeDate: string): AuctionPoint[] {
   if (!points?.length) return points;
   const openTick = intraday[0];
   const closeTick = intraday.find((p) => p.time === '15:00') ?? intraday[intraday.length - 1];
@@ -115,6 +155,8 @@ function deriveAuction(points: AuctionPoint[], intraday: IntradayPoint[]): Aucti
     const source: AuctionPoint['source'] = a ? 'anchored-real' : 'illustrative';
     return {
       ...p,
+      // timestamp 可选：缺省由交易日 + 时点（北京时间）计算
+      timestamp: Number.isFinite(p.timestamp) ? p.timestamp : Date.parse(`${tradeDate}T${p.time}+08:00`),
       volume: a ? a.volume : 0,
       amount: a ? a.amount : 0,
       source,
@@ -434,25 +476,26 @@ export interface DeriveOptions {
  * 因此 verify.mjs 的全量闭合断言、示例页与现有测试不受影响。
  */
 export function deriveDataset(base: ChartDataset, options?: DeriveOptions): ChartDataset {
-  const rawBars = base.bars ?? [];
-  if (!rawBars.length || !base.manifest) return base;
-  const ctx = contextOf(base.manifest);
+  if (!(base.bars ?? []).length || !base.manifest) return base;
+  const rawBars = hydrateBars(base.bars, base.manifest);
+  const manifest = hydrateManifest(base.manifest, rawBars[rawBars.length - 1]);
+  const ctx = contextOf(manifest);
   const enabled = resolveModules(options ?? { preset: 'full' });
   const need = new Set<DataKey>(requiredDataFor(enabled));
   const has = (key: DataKey): boolean => need.has(key);
 
   // 1) core：bars 四态叠加（按 manifest.demoPatterns 在内存副本上，落盘保持东财原生）
-  const bars = applyDemoPatterns(rawBars, base.manifest);
+  const bars = applyDemoPatterns(rawBars, manifest);
   const lastBar = bars[bars.length - 1];
 
   // 2) core：intraday 归一化，是竞价 / 逐笔 / 委托 / 多日分时的公共输入
   const intraday = normalizeIntraday(
-    hydrateIntraday(base.intraday ?? [], base.manifest), lastBar,
+    hydrateIntraday(base.intraday ?? [], manifest), lastBar,
   );
 
   // 3) 竞价列：末点量额从 intraday 锚定 + source / priceBasis
   const auction = has('auction')
-    ? deriveAuction((base.auction ?? []) as AuctionPoint[], intraday)
+    ? deriveAuction((base.auction ?? []) as AuctionPoint[], intraday, manifest.tradeDate)
     : undefined;
 
   // 4) 逐笔明细：按分钟量额严格锚定分时，不读落盘 trades
@@ -475,7 +518,7 @@ export function deriveDataset(base: ChartDataset, options?: DeriveOptions): Char
   const chips = has('chips') ? buildChipDistribution(bars) : undefined;
   const intradayMulti = has('intradayMulti')
     ? anchorIntradayMulti(
-      buildIntradayMulti(bars, intraday, 5), bars, base.manifest.tradeDate,
+      buildIntradayMulti(bars, intraday, 5), bars, manifest.tradeDate,
     )
     : undefined;
   const depthScenarios = has('depthScenarios') && depth && depthFull
@@ -488,18 +531,19 @@ export function deriveDataset(base: ChartDataset, options?: DeriveOptions): Char
   const historicalIntraday = base.historicalIntraday !== undefined
     ? base.historicalIntraday
     : (enabled.includes('historical-intraday') && has('intradayMulti') && intradayMulti
-      ? buildHistoricalIntraday(intradayMulti, bars, base.manifest)
+      ? buildHistoricalIntraday(intradayMulti, bars, manifest)
       : undefined);
 
   return {
     ...base,
+    manifest,
     bars,
     intraday,
     auction,
     // trade-tape 单独启用时 requiresData 已补 'orders'，此处 orders 必为数组 → ordIds 完整。
     // 仍以 orders ?? [] 兜底：trades 一旦派生就始终经过 linkFillsToTrades（不再因 orders
     // 未派生而整段跳过关联），保证每行都有 ordIds 字段；orders 存在时行为与原式逐字段一致。
-    trades: trades ? linkFillsToTrades(trades, orders ?? []) : trades,
+    trades: trades ? assignTradeOrderNos(linkFillsToTrades(trades, orders ?? [])) : trades,
     orders,
     depth,
     depthFull,
@@ -507,5 +551,9 @@ export function deriveDataset(base: ChartDataset, options?: DeriveOptions): Char
     chips,
     intradayMulti,
     historicalIntraday,
+    // prevIntraday 是历史分时 mini 的运行时注入通道：消费者注入即原样保留，
+    // 不参与全量派生；与 historicalIntraday 的注入语义对称。
+    prevIntraday: Array.isArray(base.prevIntraday)
+      ? (base.prevIntraday as IntradayPoint[]) : undefined,
   };
 }

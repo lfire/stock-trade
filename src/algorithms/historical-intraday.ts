@@ -14,6 +14,7 @@ import type {
 } from '../types';
 import { buildAuctionSeries } from './auction-series';
 import { buildTradeSeries } from './trade-series';
+import { assignTradeOrderNos } from './trade-order-runs';
 
 /** 单日来源：同一日的点应一致，未知值 / 混合来源一律归 custom。 */
 function sourceOf(points: IntradayPoint[]): HistoricalIntradaySeries['source'] {
@@ -112,7 +113,8 @@ export function deriveHistoricalDayView(
   return {
     dayBars,
     auction: series.auction ?? buildAuctionSeries(dayBars, points, date),
-    trades: series.trades ?? buildTradeSeries(points, date),
+    // 买卖委托号：授权注入的逐笔已带号则原样保留，否则补示意号（买单 / 卖单视图使用）
+    trades: assignTradeOrderNos(series.trades ?? buildTradeSeries(points, date)),
     manifest: {
       ...manifest,
       preClose: series.preClose,

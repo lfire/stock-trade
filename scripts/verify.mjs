@@ -160,7 +160,7 @@ ok(closeAuction.every((p, i) => i === 0 || p.matchedQty >= closeAuction[i - 1].m
 ok(closeAuction.at(-1).unmatchedQty === 0, '15:00 未匹配量应归零');
 ok(dAuction.every((p) => /^\d{2}:\d{2}:\d{2}$/.test(p.time)), '竞价 time 未精确到秒');
 ok(dTrades.every((t) => ['B', 'S', 'N'].includes(t.side)), '逐笔 side 越界');
-ok(dTrades.length === 495 && dTrades.every((t) => t.granularity && t.sideSource && t.license
+ok(dTrades.length === 476 && dTrades.every((t) => t.granularity && t.sideSource && t.license
   && t.rawSide !== undefined && t.requiresAuthorization === true && Array.isArray(t.ordIds)),
   '派生逐笔必要字段缺失或条数异常');
 ok(derived.trades.every((t) => Number.isFinite(t.timestamp)), '逐笔时间戳非有限值');
@@ -176,13 +176,20 @@ ok(derived.auction.every((p) => Number.isFinite(p.timestamp)), '竞价节点时�
     }
     return out;
   };
-  const tv = byMin(dTrades, (x) => x.time.slice(0, 5), 'volume');
-  const ta = byMin(dTrades, (x) => x.time.slice(0, 5), 'amount');
+  // 09:25 竞价成交归入首个分钟点（市面口径：开盘竞价成交并入 09:30），不能因 key 不在分时里被跳过
+  const minuteOf = (x) => (x.phase === 'auction' ? dIntra[0].time : x.time.slice(0, 5));
+  const tv = byMin(dTrades, minuteOf, 'volume');
+  const ta = byMin(dTrades, minuteOf, 'amount');
   const iv = byMin(dIntra, (x) => x.time, 'volume');
   const ia = byMin(dIntra, (x) => x.time, 'amount');
   ok(Object.keys(iv).every((k) => Math.abs((tv[k] || 0) - iv[k]) < 1e-6)
     && Object.keys(ia).every((k) => Math.abs((ta[k] || 0) - ia[k]) < 0.011),
   '派生逐笔按分钟聚合与分时不一致');
+  const total = (arr) => arr.reduce((acc, x) => acc + x.volume, 0);
+  ok(total(dTrades) === total(dIntra), `逐笔总量 ${total(dTrades)} ≠ 分时总量 ${total(dIntra)}（竞价重复计数或盘后造量）`);
+  const auc925 = dTrades.filter((x) => x.phase === 'auction');
+  ok(auc925.length === 1 && auc925[0].volume === dIntra[0].volume,
+    '09:25 竞价成交量须等于首个分钟点（开盘竞价成交）量');
 }
 ok(dDepth.bids.length === 10 && dDepth.asks.length === 10, '盘口档数异常');
 
@@ -517,7 +524,10 @@ ok(/\.tape-footer\[hidden\]\s*\{[^}]*display:\s*none/.test(html), 'hidden 会被
 ok(tapeSrc.includes("this.colCls[i] || ''"), '时间表头又回退成 num（右对齐）');
 ok(!dtsText.includes('export declare class PaneElementBase'), '.d.ts 仍有幽灵基类导出');
 // tsc 生成的声明会把对象类型换行展开，故按关键片段分别断言
-ok(dtsText.includes('export declare class AuctionPane extends HTMLElement')
+// SSR 安全基类后声明为 extends BaseElement，且 BaseElement 必须声明为 typeof HTMLElement（实例类型不变）
+const ssrBaseDts = readFileSync(path.join(root, 'dist/elements/ssr-base.d.ts'), 'utf8');
+ok(dtsText.includes('export declare class AuctionPane extends BaseElement')
+  && ssrBaseDts.includes('declare const Base: typeof HTMLElement')
   && dtsText.includes('syncSideBars(): void')
   && dtsText.includes("'load-start': CustomEvent")
   && dtsText.includes('base: string;'),
@@ -865,8 +875,9 @@ ok(html.includes('height: var(--sw-bar-h, 24px)') && tapeSrc.includes('var(--sw-
     }
     return out;
   };
-  const tv = byMin(d.trades, (x) => x.time.slice(0, 5), 'volume');
-  const ta = byMin(d.trades, (x) => x.time.slice(0, 5), 'amount');
+  const minuteOf2 = (x) => (x.phase === 'auction' ? d.intraday[0].time : x.time.slice(0, 5));
+  const tv = byMin(d.trades, minuteOf2, 'volume');
+  const ta = byMin(d.trades, minuteOf2, 'amount');
   const iv = byMin(d.intraday, (x) => x.time, 'volume');
   const ia = byMin(d.intraday, (x) => x.time, 'amount');
   const volBad = Object.keys(iv).filter((k) => Math.abs((tv[k] || 0) - iv[k]) > 1e-6);
@@ -907,6 +918,84 @@ if (problems.length) {
 }
 console.log('\n✅ 全部校验通过');
 
+// 副图扩展：注册表是唯一扩展点；成交对比 VOLCMP 作为注册式实现，核心文件不得出现专属分支
+{
+  const pane = readFileSync(path.join(root, 'src/elements/indicator-pane.ts'), 'utf8');
+  const chartSrc = readFileSync(path.join(root, 'src/elements/stock-chart.ts'), 'utf8');
+  const ctxSrc = readFileSync(path.join(root, 'src/core/chart-context.ts'), 'utf8');
+  const reg = readFileSync(path.join(root, 'src/core/subplot-indicators.ts'), 'utf8');
+  const algSrc = readFileSync(path.join(root, 'src/algorithms/volume-compare.ts'), 'utf8');
+  const algIndex = readFileSync(path.join(root, 'src/algorithms/index.ts'), 'utf8');
+  const derive = readFileSync(path.join(root, 'src/core/derive-dataset.ts'), 'utf8');
+  const catalog = readFileSync(path.join(root, 'src/workspace/module-catalog.ts'), 'utf8');
+  const idx = readFileSync(path.join(root, 'src/index.ts'), 'utf8');
+  ok(algSrc.includes('curAcc += p.volume') && algSrc.includes('prevCum') && reg.includes('累计 今'),
+    '成交对比曲线退回了每分钟增量口径，应为累计量');
+  ok(reg.includes('export function registerSubplotIndicator') && idx.includes('registerSubplotIndicator')
+    && reg.includes("id: 'VOLCMP'") && reg.includes("unavailableText: '成交对比（仅分时）'")
+    && reg.includes('volumeComparePrevious(ctx.dataset'),
+  '副图注册表缺失，或 VOLCMP 未以注册式实现');
+  ok(![pane, chartSrc, ctxSrc].some((t) => t.includes('VOLCMP') || t.includes('volumeComparePrevious'))
+    && pane.includes('getSubplotIndicator(name)') && chartSrc.includes('subplotIndicatorIds()')
+    && ctxSrc.includes('isSubplotIndicator(upper)'),
+  '核心文件（chart-context / stock-chart / indicator-pane）仍含扩展副图专属代码，新增副图须改核心');
+  ok(algIndex.includes("id: 'volume-compare'") && algIndex.includes("export * from './volume-compare'")
+    && derive.includes('prevIntraday: Array.isArray(base.prevIntraday)')
+    && catalog.includes('缺失时算法按 0 补齐'),
+  '成交对比算法未登记 ALGORITHMS / 缺注入通道 / 未声明按需依赖');
+}
+
+// SSR 安全：元素类不得直接 extends HTMLElement，须走 BaseElement；defineAll 服务端 no-op
+{
+  const elDir = path.join(root, 'src/elements');
+  const offenders = readdirSync(elDir).filter((f) => f.endsWith('.ts'))
+    .filter((f) => /export class \w+ extends HTMLElement\b/.test(readFileSync(path.join(elDir, f), 'utf8')));
+  ok(offenders.length === 0, `元素类直接 extends HTMLElement（SSR import 会崩）：${offenders.join(', ')}`);
+  const idx = readFileSync(path.join(root, 'src/index.ts'), 'utf8');
+  ok(idx.includes('export function defineElements') && idx.includes("typeof customElements === 'undefined'"),
+    '缺少按需注册 defineElements 或服务端 no-op 守卫');
+}
+
+// 盘口买卖占比柱：算法层单一真源、只统计可视档位、涨跌停提示区与档位等高（不打破侧栏行均分）
+{
+  const db = readFileSync(path.join(root, 'src/elements/depth-book.ts'), 'utf8');
+  const algIdx = readFileSync(path.join(root, 'src/algorithms/index.ts'), 'utf8');
+  ok(db.includes('depthSideRatio(') && db.includes('bids.slice(0, levels)') && db.includes('asks.slice(0, levels)')
+    && db.includes('class="split') && db.includes('.split .ratio') && !db.includes('class="pct') && !db.includes('class="pct')
+    && algIdx.includes("id: 'depth-ratio'") && algIdx.includes("export * from './depth-ratio'"),
+  '盘口分界缺少买卖占比柱，或未复用算法层 depthSideRatio / 未按可视档位统计');
+  ok(db.includes('height:${levels * LAYOUT.rowH}px') && !db.includes('min-height:120px'),
+    '涨跌停提示区未与档位等高，会让侧栏明细出现半行');
+}
+
+// 数据输入契约：样例数据满足契约、文档由契约生成且未漂移、门面导出单模块出入参
+{
+  const { validateDatasetInput } = await import('../dist/pure.js');
+  const { renderIoDoc, IO_DOC_PATH } = await import('./gen-io-doc.mjs');
+  const rawIn = { manifest: JSON.parse(readFileSync(path.join(root, 'src/data/manifest.json'), 'utf8')) };
+  for (const [k, file] of Object.entries(rawIn.manifest.files)) rawIn[k] = JSON.parse(readFileSync(path.join(root, 'src/data', file), 'utf8'));
+  const rep = validateDatasetInput(rawIn, { preset: 'full' });
+  ok(rep.ok && rep.warnings.length === 0, `样例数据不满足输入契约：${JSON.stringify([...rep.errors, ...rep.warnings]).slice(0, 200)}`);
+  ok(existsSync(IO_DOC_PATH) && readFileSync(IO_DOC_PATH, 'utf8') === renderIoDoc(),
+    'docs/05-数据输入契约与模块出入参.md 与代码契约不一致，请执行 npm run docs:io');
+  const wsSrc = readFileSync(path.join(root, 'src/elements/stock-workspace.ts'), 'utf8');
+  ok(wsSrc.includes('validateDatasetInput(') && wsSrc.includes('WORKSPACE_EVENTS.DATA_VALIDATE'),
+    '<stock-workspace> 注入数据后未按契约校验 / 未派发 data-validate');
+}
+
+// 逐笔买卖单视图：算法单一真源、组件通用渲染、覆盖视图与历史多栏共用同一套列配置
+{
+  const tt = readFileSync(path.join(root, 'src/elements/trade-tape.ts'), 'utf8');
+  const dt = readFileSync(path.join(root, 'src/workspace/detail.ts'), 'utf8');
+  const ai = readFileSync(path.join(root, 'src/algorithms/index.ts'), 'utf8');
+  ok(ai.includes("id: 'trade-order-runs'") && ai.includes("export * from './trade-order-runs'")
+    && tt.includes('paintMatch(') && tt.includes('isBigOrder(run, this.bigAmount)') && tt.includes('clip-top')
+    && dt.includes('withOrderRuns(withTradeTrend(trades, preClose))')
+    && dt.includes('withOrderRuns(withTradeTrend(dayView.trades, series.preClose))')
+    && (dt.match(/tradeViewConfig\(ctx, /g) || []).length >= 2 && dt.includes("coverRegion(ctx, 'cover-view')"),
+  '逐笔买卖单视图缺失：算法未登记 / 组件未实现跨行框 / 当日与历史多栏未共用列配置或缺切换');
+}
+
 // 文档一致性门禁：README 与 docs/00 的「当前事实速查」必须同步，避免逐轮追加导致漂移
 {
   const rd = readFileSync(path.join(root, 'README.md'), 'utf8');
@@ -914,7 +1003,7 @@ console.log('\n✅ 全部校验通过');
   const quick = (txt) => txt.split('\n').find((l) => l.includes('当前事实速查')) || '';
   const rq = quick(rd), dq = quick(d00);
   ok(rq.length > 0 && dq.length > 0, 'README / docs00 缺少「当前事实速查」');
-  for (const f of ['13', '5', '17', '14', '124/124', '81 JS + 82', '44', '28', '46', '18', '26', '24']) {
+  for (const f of ['13', '5', '17', '14', '143/143', '44', '28', '46', '18', '26', '24']) {
     ok(rq.includes(f) && dq.includes(f), `文档当前事实速查不同步：${f}`);
   }
 }

@@ -6,11 +6,14 @@
  * 消费者经子路径 'stock-chart/modules/core' 静态寻址，按需只拉起相关实现闭包。
  */
 import { MODULE_CATALOG, type WorkspaceModuleDef } from '../workspace/module-catalog';
+import { describeModule, type ModuleDescription } from '../workspace/module-io';
 
 /** 模块 id 字面量，与 MODULE_CATALOG 的键一致。 */
 export const MODULE_ID = 'core';
 /** 模块目录描述符（纯数据，来自零依赖的 module-catalog）。 */
 export const descriptor: WorkspaceModuleDef = MODULE_CATALOG['core'];
+/** 单模块出入参：必需落盘输入、派生数据、元素、API、配置、事件（数据输入由模块目录计算） */
+export const io: ModuleDescription = describeModule('core')!;
 
 export { LAYOUT, PALETTE, THEMES } from '../types';
 export type { ChartDataset } from '../types';

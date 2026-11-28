@@ -9,7 +9,14 @@
     "type": "git",
     "url": "git+https://github.com/lfire/stock-trade.git"
   },
-  "keywords": ["stock-chart", "web-components", "webgl2", "kline", "candlestick", "a-share"],
+  "keywords": [
+    "stock-chart",
+    "web-components",
+    "webgl2",
+    "kline",
+    "candlestick",
+    "a-share"
+  ],
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -54,12 +61,54 @@
       "types": "./dist/frameworks/vanilla.d.ts",
       "default": "./dist/frameworks/vanilla.js"
     },
-    "./core/*.js": "./dist/core/*.js",
-    "./core/*": "./dist/core/*.js",
-    "./gl/*.js": "./dist/gl/*.js",
-    "./gl/*": "./dist/gl/*.js",
-    "./compute/*.js": "./dist/compute/*.js",
-    "./compute/*": "./dist/compute/*.js",
+    "./core/*.js": {
+      "types": "./dist/core/*.d.ts",
+      "default": "./dist/core/*.js"
+    },
+    "./core/*": {
+      "types": "./dist/core/*.d.ts",
+      "default": "./dist/core/*.js"
+    },
+    "./gl/*.js": {
+      "types": "./dist/gl/*.d.ts",
+      "default": "./dist/gl/*.js"
+    },
+    "./gl/*": {
+      "types": "./dist/gl/*.d.ts",
+      "default": "./dist/gl/*.js"
+    },
+    "./compute/*.js": {
+      "types": "./dist/compute/*.d.ts",
+      "default": "./dist/compute/*.js"
+    },
+    "./compute/*": {
+      "types": "./dist/compute/*.d.ts",
+      "default": "./dist/compute/*.js"
+    },
+    "./elements/*.js": {
+      "types": "./dist/elements/*.d.ts",
+      "default": "./dist/elements/*.js"
+    },
+    "./elements/*": {
+      "types": "./dist/elements/*.d.ts",
+      "default": "./dist/elements/*.js"
+    },
+    "./workspace/*.js": {
+      "types": "./dist/workspace/*.d.ts",
+      "default": "./dist/workspace/*.js"
+    },
+    "./workspace/*": {
+      "types": "./dist/workspace/*.d.ts",
+      "default": "./dist/workspace/*.js"
+    },
+    "./modules/*.js": {
+      "types": "./dist/modules/*.d.ts",
+      "default": "./dist/modules/*.js"
+    },
+    "./modules/*": {
+      "types": "./dist/modules/*.d.ts",
+      "default": "./dist/modules/*.js"
+    },
     "./frameworks/*.js": {
       "types": "./dist/frameworks/*.d.ts",
       "default": "./dist/frameworks/*.js"
@@ -68,13 +117,13 @@
       "types": "./dist/frameworks/*.d.ts",
       "default": "./dist/frameworks/*.js"
     },
-    "./elements/*.js": "./dist/elements/*.js",
-    "./elements/*": "./dist/elements/*.js",
-    "./workspace/*": { "types": "./dist/workspace/*.d.ts", "default": "./dist/workspace/*.js" },
-    "./modules/*": { "types": "./dist/modules/*.d.ts", "default": "./dist/modules/*.js" },
-    "./modules/*.js": "./dist/modules/*.js"
+    "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "sideEffects": false,
   "engines": {
     "node": ">=18"
@@ -91,7 +140,9 @@
     "build": "node scripts/build.mjs",
     "prepublishOnly": "npm run check && npm run typecheck && npm test && npm run build",
     "preserve": "npm run build",
-    "serve": "node scripts/serve.mjs"
+    "serve": "node scripts/serve.mjs",
+    "predocs:io": "npm run build",
+    "docs:io": "node scripts/gen-io-doc.mjs"
   },
   "devDependencies": {
     "typescript": "5.6.3"

@@ -16,6 +16,8 @@ export * from './architecture/index';
 export { ALGORITHMS } from './algorithms/index';
 export type { AlgorithmMeta } from './algorithms/index';
 export type { HistoricalIntradaySeries } from './types';
+export type { DepthSideRatio } from './algorithms/depth-ratio';
+export type { OrderRun, MatchedTrade, OrderNoSide } from './algorithms/trade-order-runs';
 export {
   elapsedMarketMinutes, intradayBucket,
   r2, r6, roundToTick, mulberry32, clockMinutes, isoWeek,
@@ -27,4 +29,11 @@ export {
   matchAuction, makeOrderBook, buildAuctionSeries, buildTradeSeries,
   buildDepthSnapshot, buildOrderFlow, reduceOrderBook, linkFillsToTrades,
   buildDepthScenarios, LIMIT_UP_SEAL_VOLUME, LIMIT_DOWN_SEAL_VOLUME,
+  buildVolumeCompare, pickPreviousDay, volumeComparePrevious, depthSideRatio,
+  deriveHistoricalDayView, withTradeTrend, isoToDateBase,
+  assignTradeOrderNos, buildOrderRuns, isBigOrder, BIG_ORDER_AMOUNT,
 } from './algorithms/index';
+
+/** 输入数据契约与校验（无 DOM）：接入方注入前可先校验，Node 侧数据管道同样可用 */
+export { INPUT_CONTRACT, INPUT_KEYS, validateDatasetInput, inputsForModules } from './core/input-contract';
+export type { InputKey, InputSpec, InputFieldSpec, InputAvailability, InputIssue, InputReport } from './core/input-contract';

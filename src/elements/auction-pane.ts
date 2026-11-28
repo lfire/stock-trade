@@ -3,7 +3,8 @@
 // 几何由 src/core/auction-layer.ts 提供给 price-pane（价格线）与 indicator-pane（量柱），
 // 两者与竞价段共用同一价格轴 / 同一量区。
 // 属性：ratio = 竞价段占主图宽度的比例（默认 0.16，范围 0.08–0.30）。
-export class AuctionPane extends HTMLElement {
+import { BaseElement } from './ssr-base';
+export class AuctionPane extends BaseElement {
   static get observedAttributes() { return ['ratio']; }
   connectedCallback() { /* 配置节点：不注册绘制 pane、不产生几何 */ }
 }

@@ -24,14 +24,17 @@ export { aggregateDaily, aggregateIntraday, buildBars, PERIODS } from './aggrega
 export * from './format';
 export * from './chip-distribution';
 export * from './intraday-multi';
+export * from './volume-compare';
 export * from './historical-intraday';
 export type { HistoricalIntradaySeries } from '../types';
 export * from './auction-match';
 export * from './auction-series';
 export * from './trade-series';
+export * from './trade-order-runs';
 export * from './depth-snapshot';
 export * from './order-book';
 export * from './depth-scenarios';
+export * from './depth-ratio';
 
 /** 算法单元元数据 */
 export interface AlgorithmMeta {
@@ -93,6 +96,12 @@ export const ALGORITHMS: Readonly<Record<string, AlgorithmMeta>> = Object.freeze
     id: 'chip-distribution', concept: '筹码分布估算模型', inputs: 'bars（近 N 日）+ bins/lookback/decay/shape',
     outputs: 'ChipDataset（9 项统计 + 逐日直方图）', sharedBy: ['runtime', 'build'], pure: true,
   },
+  'volume-compare': {
+    id: 'volume-compare', concept: '成交对比（当天 / 前一日累计成交量曲线）',
+    inputs: '当天分时点、前一交易日分时点或多日分时',
+    outputs: 'VolumeComparePoint[]（等长累计曲线）',
+    sharedBy: ['runtime'], pure: true,
+  },
   'intraday-multi': {
     id: 'intraday-multi', concept: '多日分时（前 N 日由日 K 拟真）', inputs: 'bars、单日 intraday、天数',
     outputs: 'IntradayPoint[]（扁平多日序列）', sharedBy: ['runtime', 'build'], pure: true,
@@ -123,6 +132,16 @@ export const ALGORITHMS: Readonly<Record<string, AlgorithmMeta>> = Object.freeze
     id: 'order-book', concept: '委托流生成 / 回放聚合 / 成交关联',
     inputs: '委托事件、分时曲线、十档快照', outputs: 'OrderRecord[]、全景委托簿、TradeTick[]',
     sharedBy: ['runtime', 'build'], pure: true,
+  },
+  'trade-order-runs': {
+    id: 'trade-order-runs', concept: '逐笔明细买卖委托号与连续成交合并（买单 / 卖单视图）',
+    inputs: '逐笔明细（可带 L2 买卖委托号）', outputs: '带 buyOrdId / sellOrdId 与 buyRun / sellRun 的逐笔',
+    sharedBy: ['runtime'], pure: true,
+  },
+  'depth-ratio': {
+    id: 'depth-ratio', concept: '盘口买卖占比（当前可视档位）',
+    inputs: '可视买档、可视卖档、口径（量 / 额）', outputs: 'DepthSideRatio（合计与占比）',
+    sharedBy: ['runtime'], pure: true,
   },
   'depth-scenarios': {
     id: 'depth-scenarios', concept: '普通 / 涨停 / 跌停盘口场景', inputs: '十档、全景、preClose、limitRate',

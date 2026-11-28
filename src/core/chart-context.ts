@@ -3,6 +3,7 @@
 //   左列 = 开盘集合竞价 9:15–9:25（上价格 / 下挂单量+成交量），仅分时且开启时显示
 //   中列 = 上主图（连续竞价 9:30–15:00 或 K 线）+ 右端尾盘竞价 14:57–15:00 放大列 + 下多个副图
 //   右列 = 上筹码峰横条（K 线且开启）+ 下筹码统计；分时模式右列给十档盘口
+import { BUILTIN_SUBPLOT_INDICATORS, isSubplotIndicator } from './subplot-indicators';
 import { PALETTE, AXIS_GUTTER_L, AXIS_GUTTER_R, LAYOUT, withPalette } from '../types';
 import { rgba, rect, line } from '../gl/geometry';
 import { buildPhaseGeometry } from './auction-layer';
@@ -51,7 +52,8 @@ interface ValueAxisPane extends PaneElementLike {
 const SUBPLOT_INFO_H = LAYOUT.rowH;   // 副图信息栏与数据行同高
 
 /** 副图可切换的指标（computeIndicator 支持的全部类型） */
-export const SUBPLOT_INDICATORS = Object.freeze(['VOL', 'AMOUNT', 'MACD', 'KDJ', 'VOL_RATIO']);
+/** 内置副图指标（向后兼容常量）；扩展指标经 registerSubplotIndicator 注册，用 subplotIndicatorIds() 枚举 */
+export const SUBPLOT_INDICATORS = BUILTIN_SUBPLOT_INDICATORS;
 
 /** 默认均线配置（用工厂函数避免共享引用） */
 const defaultMA = (palette = PALETTE) => [
@@ -425,7 +427,7 @@ export class ChartContext {
   setSubplotIndicator(index: number, name: string) {
     const upper = String(name || '').toUpperCase();
     const subs = this.panes.filter((p) => p.tagName.toLowerCase() === 'indicator-pane');
-    if (!subs[index] || !SUBPLOT_INDICATORS.includes(upper)) return this.getSubplotConfig();
+    if (!subs[index] || !isSubplotIndicator(upper)) return this.getSubplotConfig();
     if (index === 0 && upper !== 'VOL') return this.getSubplotConfig();   // 首个副图恒为成交量
     subs[index].setAttribute('indicator', upper);   // 触发 attributeChangedCallback → 重绘
     this.emit('subplot-config-change', { config: this.getSubplotConfig() });

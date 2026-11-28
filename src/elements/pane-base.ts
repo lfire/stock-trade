@@ -1,3 +1,4 @@
+import { BaseElement } from './ssr-base';
 import { rgba, rect, line } from '../gl/geometry';
 import { PALETTE, AXIS_GUTTER_L, AXIS_GUTTER_R } from '../types';
 import type { SubplotLayout, OverlayTextItem } from '../types';
@@ -75,7 +76,7 @@ export function axisScaleText(r: SubplotLayout, _width: number, lo: number, hi: 
 }
 
 /** pane 基类：统一连接到 ChartContext，并处理属性变更重绘。 */
-export class PaneElement extends HTMLElement {
+export class PaneElement extends BaseElement {
   declare ctx: ChartContext | null;
   declare rect: SubplotLayout | null;
   constructor() { super(); this.ctx = null; this.rect = null; }

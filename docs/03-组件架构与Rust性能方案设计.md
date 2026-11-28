@@ -6,7 +6,7 @@
 > 本文为技术方案，不含任何投资建议。文中性能数字均为**设计估算**，需实测验证。
 
 > **文档定位与现状说明**
-> 本文为第三期**方案设计**，Rust/WASM 多线程、列式存储、`ts-rs` 类型生成、Cargo 工程结构与拟定 API 均为**规划、尚未落地**。当前为纯 TS 工程：`JsComputeEngine` + `src/algorithms/` 18 单元 + `src/architecture/` 四层架构 + 9 个公开标签 + 两个 Container；`src/data/` 5 键驱动（bars/intraday/auction/depth/orders）、5 个数据集运行时派生（chips/intradayMulti/depthFull/depthScenarios/trades，逐笔明细不再落盘）；落盘 bars 保持东财 push2his 原生 11 列映射，演示四态由 `manifest.demoPatterns` 在内存叠加。文中 L0–L4 是**方案分层编号**，与 `docs/00` 数据分层 L0/L1/L2 不同义。概念定义以 `docs/00` 为准。
+> 本文为第三期**方案设计**，Rust/WASM 多线程、列式存储、`ts-rs` 类型生成、Cargo 工程结构与拟定 API 均为**规划、尚未落地**。当前为纯 TS 工程：`JsComputeEngine` + `src/algorithms/` `ALGORITHMS` 注册单元 + `src/architecture/` 四层架构 + 9 个公开标签 + 两个 Container；`src/data/` 5 键驱动（bars/intraday/auction/depth/orders）、5 个数据集运行时派生（chips/intradayMulti/depthFull/depthScenarios/trades，逐笔明细不再落盘）；落盘 bars 保持东财 push2his 原生 11 列映射，演示四态由 `manifest.demoPatterns` 在内存叠加。文中 L0–L4 是**方案分层编号**，与 `docs/00` 数据分层 L0/L1/L2 不同义。概念定义以 `docs/00` 为准。
 
 **变更记录**
 

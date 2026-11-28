@@ -68,6 +68,14 @@ export interface WorkspaceConfig {
    * 消费路径同 historicalAuctionEnabled：detail → syncAll → applyHistoricalViewState，不经 ChartApi。
    */
   historicalTapeExpanded: boolean;
+  /**
+   * 逐笔明细的展示模式：'list' 普通明细（时间 / 价格 / 成交量 / 方向）；
+   * 'match' 买单 / 卖单视图（连续成交同一委托合并为跨行框，显示合计手数与金额，大单标「大」）。
+   * 作用于覆盖视图的「逐笔明细」与历史分时展开态多栏。
+   */
+  tradeView: 'list' | 'match';
+  /** 买单 / 卖单视图的大单金额阈值（元），默认 20 万（东方财富资金流「大单」下限） */
+  bigOrderAmount: number;
   maPanelOpen: boolean;
   crosshair: number | null;
   pointer: { x: number; y: number } | null;
@@ -99,6 +107,8 @@ export const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
   historicalIntradayDate: null,
   historicalAuctionEnabled: true,
   historicalTapeExpanded: false,
+  tradeView: 'list',
+  bigOrderAmount: 200000,
   maPanelOpen: false,
   crosshair: null,
   pointer: null,
@@ -119,6 +129,8 @@ export const WORKSPACE_EVENTS = Object.freeze({
   CONFIG_CHANGE: 'workspace-config-change',
   ERROR: 'chart-error',
   STATUS: 'workspace-status',
+  /** 数据注入后按输入契约校验的结果（非致命：errors 表示口径会出错，warnings 为可容忍偏差） */
+  DATA_VALIDATE: 'data-validate',
 });
 
 /** 组件内部模块共用的上下文（由主元素注入，模块不直接持有 HTMLElement 根） */

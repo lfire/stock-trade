@@ -73,6 +73,8 @@ export function parseWorkspaceConfig(params: URLSearchParams): Partial<Workspace
   }
   if (has('historical-auction')) out.historicalAuctionEnabled = get('historical-auction') !== 'off';
   if (has('historical-tape-expanded')) out.historicalTapeExpanded = get('historical-tape-expanded') === '1';
+  if (has('trade-view')) out.tradeView = oneOf<'list' | 'match'>(get('trade-view'), ['list', 'match'], 'list');
+  if (has('big-order')) { const v = Number(get('big-order')); if (Number.isFinite(v) && v > 0) out.bigOrderAmount = v; }
 
   if (has('crosshair')) out.crosshair = int(get('crosshair'), 0);
   if (has('pointer')) {

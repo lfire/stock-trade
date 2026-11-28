@@ -9,6 +9,7 @@
  * 内部把头部行情、工具栏、明细与详情覆盖视图作为私有模块挂载，
  * 页面不再 querySelector 组件内部 DOM、不再直接调用子组件方法。
  */
+import { BaseElement } from './ssr-base';
 import { buildWorkspaceCSS, buildWorkspaceTemplate } from '../workspace/template';
 import { WORKSPACE_SHELL_CSS } from '../workspace/shell-css';
 import { MODULE_CATALOG, resolveModules, isModuleEnabled } from '../workspace/module-catalog';
@@ -21,6 +22,7 @@ import { mountHead, syncHead } from '../workspace/head';
 import { mountControls, syncControls } from '../workspace/controls';
 import { mountDetail, syncDetail, mountSideData, syncSideData } from '../workspace/detail';
 import { emitEvent } from '../events';
+import { validateDatasetInput } from '../core/input-contract';
 import type { ChartDataset, DetailData, MAConfig, MACDParams } from '../types';
 
 /** 内部 <stock-chart> 需要用到的公开方法（结构化描述，避免宽松类型） */
@@ -81,7 +83,7 @@ registerLifecycle('tape', { mount: mountSideData, sync: syncSideData });
 /** 已告警过的未注册 lifecycle，保证同一值只 warn 一次。 */
 const warnedLifecycles: Set<string> = new Set();
 
-export class StockWorkspace extends HTMLElement {
+export class StockWorkspace extends BaseElement {
   /** 结构化数据输入 */
   declare data: ChartDataset | null;
   /** 配置输入（增量合并） */
@@ -176,7 +178,16 @@ export class StockWorkspace extends HTMLElement {
       this._chart.setDetailData?.(this.buildDetailData());
       this.syncAll();
       emitEvent(this, WORKSPACE_EVENTS.DATA_READY, { dataset: value });
+      this.validateData(value);
     }
+  }
+
+  /** 按当前启用模块校验注入数据并派发 data-validate（非致命，不阻断渲染） */
+  private validateData(value: ChartDataset | null): void {
+    if (!value) return;
+    const c = this._config;
+    const report = validateDatasetInput(value, c.modules?.length ? { modules: c.modules } : { preset: c.preset });
+    emitEvent(this, WORKSPACE_EVENTS.DATA_VALIDATE, report);
   }
 
   setConfig(patch: Partial<WorkspaceConfig>): void {

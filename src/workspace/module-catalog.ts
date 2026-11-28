@@ -117,6 +117,8 @@ const BUILTIN_MODULES: WorkspaceModuleDef[] = [
   {
     id: 'indicator',
     label: '技术指标副图',
+    // 可选指标 VOLCMP 的前一日曲线需要 intradayMulti（或历史分时 mini 注入的
+    // prevIntraday）；此二者由各自模块按需提供，缺失时算法按 0 补齐、不强制派生。
     requiresData: ['bars', 'intraday'],
     dependencies: ['core'],
     presets: ['full', 'intraday', 'candle'],
@@ -135,7 +137,8 @@ const BUILTIN_MODULES: WorkspaceModuleDef[] = [
   {
     id: 'depth-book',
     label: '十档盘口',
-    requiresData: ['depth', 'orders'],
+    // depthScenarios：盘口支持普通 / 涨停 / 跌停场景切换（setDepthScenario），单独启用时也须派生
+    requiresData: ['depth', 'orders', 'depthScenarios'],
     dependencies: ['core'],
     presets: ['full', 'intraday'],
     lifecycle: 'depth',
@@ -273,8 +276,11 @@ function topoSort(seeds: readonly string[]): string[] {
  *   新模块只有显式出现在 modules 数组里才装载，避免「注册即半装载」（无 DOM 切片 / 生命周期）。
  * 返回去重、依赖在前的拓扑顺序 id 数组。
  */
+/** resolveModules 的入参：显式模块清单优先，否则按预设 */
+export interface ResolveModulesOptions { modules?: string[]; preset?: WorkspacePreset }
+
 export function resolveModules(
-  input: { modules?: string[]; preset?: WorkspacePreset } | undefined,
+  input: ResolveModulesOptions | undefined,
 ): string[] {
   const explicit = input?.modules;
   if (Array.isArray(explicit) && explicit.length > 0) {

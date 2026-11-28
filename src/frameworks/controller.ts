@@ -11,6 +11,7 @@
 import type { ChartDataset, StockChartEventMap } from '../types';
 import type { WorkspaceConfig } from '../workspace/types';
 import { WORKSPACE_EVENTS } from '../workspace/types';
+import type { InputReport } from '../core/input-contract';
 
 /** 组件宿主的最小结构化契约（不引用任何自定义元素类，便于测试与 SSR） */
 export interface WorkspaceHost extends EventTarget {
@@ -26,6 +27,7 @@ export interface WorkspaceEventMap extends Omit<StockChartEventMap, 'dataset-rea
   'dataset-ready': CustomEvent<{ dataset: ChartDataset | null }>;
   'workspace-config-change': CustomEvent<{ config: WorkspaceConfig; patch: Partial<WorkspaceConfig> }>;
   'workspace-status': CustomEvent<{ status: string; message?: string }>;
+  'data-validate': CustomEvent<InputReport>;
 }
 
 export type WorkspaceEventName = keyof WorkspaceEventMap & string;

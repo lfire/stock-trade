@@ -1,14 +1,26 @@
 // 交易明细：DOM 虚拟滚动表格，与 crosshair 联动。B/S/N 着色，显式标注来源与粒度。
+import { BaseElement } from './ssr-base';
 import { LAYOUT } from '../types';
 import { emitEvent, CHART_EVENTS } from '../events';
 import type { TradeTick, OrderRecord, TradeTapeViewConfig, TradeTapeMetrics } from '../types';
+import { BIG_ORDER_AMOUNT, isBigOrder } from '../algorithms/trade-order-runs';
+import type { OrderRun } from '../algorithms/trade-order-runs';
 
 interface TapeRow extends TradeTick {
   trend?: number;
+  buyRun?: OrderRun;
+  sellRun?: OrderRun;
   [key: string]: unknown;
 }
 
-export class TradeTape extends HTMLElement {
+/** 股 → 手（A 股 1 手 = 100 股），非整手保留至多 2 位小数 */
+const lotsText = (volume: number): string =>
+  (volume / 100).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+/** 金额：≥1 亿用「亿」，≥1 万用「万」，其余取整（与市面逐笔明细一致） */
+const amountText = (v: number): string => (v >= 1e8 ? `${(v / 1e8).toFixed(2)}亿`
+  : v >= 1e4 ? `${(v / 1e4).toFixed(2)}万` : `${Math.round(v)}`);
+
+export class TradeTape extends BaseElement {
   declare rows: Array<TradeTick | OrderRecord>;
   declare _rawRows: Array<TradeTick | OrderRecord>;
   declare rowH: number;
@@ -26,6 +38,9 @@ export class TradeTape extends HTMLElement {
   declare _eventHost: EventTarget | undefined;
   declare ro: ResizeObserver | undefined;
   declare _lastH: number | undefined;
+  declare mode: 'list' | 'match';
+  declare basePrice: number | null;
+  declare bigAmount: number;
   constructor() {
     super();
     this.rows = [];
@@ -37,6 +52,9 @@ export class TradeTape extends HTMLElement {
     this.cols = '62px 1fr 1fr 30px';
     this.colCls = ['', 'num', 'num', 'side'];
     this.extraKey = null;   // 挂单视角额外显示「剩余在挂量」列
+    this.mode = 'list';     // 'match' = 买单 / 卖单视图
+    this.basePrice = null;
+    this.bigAmount = BIG_ORDER_AMOUNT;
     this.attachShadow({ mode: 'open' });
   }
 
@@ -78,12 +96,15 @@ export class TradeTape extends HTMLElement {
     // 空 class 表示该列左对齐（如「时间」）；不能回退成 num，否则表头右对齐而数据行左对齐
     return this.heads.map((h: string, i: number) => `<span class="${this.colCls[i] || ''}">${h}</span>`).join('');
   }
-  setViewConfig({ heads, labelKey, cols, colCls, extraKey }: TradeTapeViewConfig) {
+  setViewConfig({ heads, labelKey, cols, colCls, extraKey, mode, basePrice, bigAmount }: TradeTapeViewConfig) {
     if (heads) this.heads = heads;
     if (labelKey) this.labelKey = labelKey;
     this.cols = cols || '62px 1fr 1fr 30px';
     this.colCls = colCls || ['', 'num', 'num', 'side'];
     this.extraKey = extraKey || null;
+    this.mode = mode === 'match' ? 'match' : 'list';
+    this.basePrice = Number.isFinite(basePrice) ? (basePrice as number) : null;
+    this.bigAmount = Number.isFinite(bigAmount) ? (bigAmount as number) : BIG_ORDER_AMOUNT;
     this.renderShell();   // 列模板写在 shadow CSS 里，需重建表头与行网格
   }
 
@@ -200,6 +221,32 @@ export class TradeTape extends HTMLElement {
                 color:var(--sw-up);border:1px solid color-mix(in srgb,var(--sw-up) 35%,transparent)}
         .tag.SF{background:color-mix(in srgb,var(--sw-down) 12%,transparent);
                 color:var(--sw-down);border:1px solid color-mix(in srgb,var(--sw-down) 35%,transparent)}
+        /* 买单 / 卖单视图：行内只给单元格着色；连续成交同一委托合并为跨行虚线框 */
+        .row.m{color:var(--sw-text)}
+        .row.m .t{color:var(--sw-muted)}
+        .row.m .c{text-align:center;font-variant-numeric:tabular-nums}
+        .row.m .up{color:var(--sw-up)}
+        .row.m .down{color:var(--sw-down)}
+        .row.m .flat{color:var(--sw-muted)}
+        .mwrap{position:absolute;left:0;right:0;display:grid;grid-template-columns:${this.cols};gap:4px;
+               padding:0 6px;box-sizing:border-box;pointer-events:none}
+        .mbox{grid-row:1;position:relative;box-sizing:border-box;margin:1px 0;min-width:0;overflow:hidden;
+              display:flex;flex-direction:column;align-items:center;justify-content:center;
+              border:1px dashed color-mix(in srgb,var(--sw-muted) 55%,transparent);
+              background:var(--sw-bg,#fff);color:var(--sw-text);font:10px/12px system-ui,-apple-system,sans-serif;
+              font-variant-numeric:tabular-nums;white-space:nowrap}
+        .mbox.clip-top{border-top:none;margin-top:0}
+        .mbox.clip-bottom{border-bottom:none;margin-bottom:0}
+        .mbox.big.buy{border-color:color-mix(in srgb,var(--sw-up) 55%,transparent);
+                      background:color-mix(in srgb,var(--sw-up) 6%,var(--sw-bg,#fff))}
+        .mbox.big.sell{border-color:color-mix(in srgb,var(--sw-down) 55%,transparent);
+                       background:color-mix(in srgb,var(--sw-down) 6%,var(--sw-bg,#fff))}
+        .mbox .corner{position:absolute;left:0;top:0;width:17px;height:17px;padding:1px 0 0 1px;box-sizing:border-box;
+                      color:#fff;font:600 9px/9px system-ui,sans-serif;font-style:normal;text-align:left}
+        /* 带角标的框内容整体下移，避开左上三角（2 行框也不与首行文字重叠） */
+        .mbox.big:not(.clip-top){padding-top:6px}
+        .mbox.buy .corner{background:linear-gradient(135deg,var(--sw-up) 50%,transparent 50%)}
+        .mbox.sell .corner{background:linear-gradient(135deg,var(--sw-down) 50%,transparent 50%)}
       </style>
       <div class="head">${this.headHtml()}</div>
       <div class="view"><div class="spacer"></div></div>`;
@@ -222,6 +269,7 @@ export class TradeTape extends HTMLElement {
     const count = Math.ceil(this.view.clientHeight / this.rowH) + 4;
     const from = Math.max(0, Math.floor(top / this.rowH) - 2);
     const to = Math.min(this.rows.length, from + count);
+    if (this.mode === 'match') { this.paintMatch(from, to); return; }
     const frag = document.createDocumentFragment();
     for (let i = from; i < to; i += 1) {
       const t = this.rows[i] as TapeRow;
@@ -238,6 +286,59 @@ export class TradeTape extends HTMLElement {
       frag.appendChild(el);
     }
     this.spacer.replaceChildren(frag);
+  }
+
+  /**
+   * 买单 / 卖单视图：列 = 时间 / 成交价 / 成交（手）/ 买单 / 卖单。
+   * 单笔委托直接在格内显示手数；连续多笔同一委托（buyRun / sellRun.count > 1）画跨行框，
+   * 框内为该段合计「手 + 金额」，金额达阈值标「大」。框被可视窗口截断时去掉截断侧边框。
+   */
+  paintMatch(from: number, to: number) {
+    const rows = this.rows as TapeRow[];
+    const desc = !this._windowMode && this.getAttribute('order') === 'desc';
+    const tone = (t: TapeRow): string => {
+      const d = this.basePrice != null ? t.price - this.basePrice : (t.trend ?? 0);
+      return d > 1e-9 ? 'up' : d < -1e-9 ? 'down' : 'flat';
+    };
+    const frag = document.createDocumentFragment();
+    for (let i = from; i < to; i += 1) {
+      const t = rows[i];
+      const c = tone(t);
+      const single = (run?: OrderRun): string => (!run || run.count <= 1
+        ? `<span class="c ${c}">${lotsText(t.volume)}</span>` : '<span></span>');
+      const el = document.createElement('div');
+      el.className = `row m${i % 2 ? ' alt' : ''}${this.activeTime && t.time.slice(0, 5) === this.activeTime ? ' active' : ''}`;
+      el.style.top = `${i * this.rowH}px`;
+      el.innerHTML = `<span class="t">${t.time.length === 5 ? `${t.time}:00` : t.time}</span>`
+        + `<span class="c price ${c}">${t.price.toFixed(2)}</span>`
+        + `<span class="c">${lotsText(t.volume)}</span>${single(t.buyRun)}${single(t.sellRun)}`;
+      frag.appendChild(el);
+    }
+    for (const [key, col] of [['buyRun', 4], ['sellRun', 5]] as const) {
+      for (let i = from; i < to; i += 1) {
+        const run = rows[i][key];
+        if (!run || run.count <= 1) continue;
+        const start = i;
+        while (i + 1 < to && rows[i + 1][key] === run) i += 1;
+        const topRow = rows[start], bottomRow = rows[i];
+        const clipTop = topRow.seq !== (desc ? run.lastSeq : run.firstSeq);
+        const clipBottom = bottomRow.seq !== (desc ? run.firstSeq : run.lastSeq);
+        const big = isBigOrder(run, this.bigAmount);
+        const wrap = document.createElement('div');
+        wrap.className = 'mwrap';
+        wrap.style.top = `${start * this.rowH}px`;
+        wrap.style.height = `${(i - start + 1) * this.rowH}px`;
+        const side = key === 'buyRun' ? 'buy' : 'sell';
+        wrap.innerHTML = `<span class="mbox ${side}${big ? ' big' : ''}${clipTop ? ' clip-top' : ''}`
+          + `${clipBottom ? ' clip-bottom' : ''}" style="grid-column:${col}" title="${side === 'buy' ? '买' : '卖'}单 ${run.ordId} · `
+          + `连续成交 ${run.count} 笔 · ${lotsText(run.volume)}手 ${amountText(run.amount)}">`
+          + `${big && !clipTop ? '<i class="corner">大</i>' : ''}<span>${lotsText(run.volume)}手</span>`
+          // 被窗口截断只剩 1 行时放不下两行文字，只保留手数（完整信息见 title）
+          + `${i - start + 1 >= 2 ? `<span>${amountText(run.amount)}</span>` : ''}</span>`;
+        frag.appendChild(wrap);
+      }
+    }
+    this.spacer!.replaceChildren(frag);
   }
 }
 

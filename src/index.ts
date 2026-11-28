@@ -20,6 +20,13 @@ export {
   StockWorkspace,
 };
 export { SUBPLOT_INDICATORS } from './elements/stock-chart';
+/** 副图扩展点：注册自定义副图指标（数据 + 信息栏文案），绘制复用通用渲染器 */
+export {
+  registerSubplotIndicator, subplotIndicatorIds, subplotIndicatorLabel, getSubplotIndicator,
+} from './core/subplot-indicators';
+export type {
+  SubplotIndicatorDef, SubplotSeries, SubplotPoint, SubplotRenderType, SubplotFormat,
+} from './core/subplot-indicators';
 export { PALETTE, THEMES, LAYOUT, resolveTheme, createPalette, applyPalette, resetPalette, withPalette } from './types';
 export { bindStockChart } from './frameworks/react';
 export { CHART_EVENTS, emitEvent } from './events';
@@ -30,6 +37,9 @@ export { WORKSPACE_EVENTS, DEFAULT_WORKSPACE_CONFIG } from './workspace/types';
 export type { WorkspaceConfig, WorkspaceInputs, WorkspaceModule, WorkspaceContext, DetailSet, TapePlacement } from './workspace/types';
 /** 模块化装载扩展点：注册自定义模块 / CSS 片段，并读取模块目录与模板构造器 */
 export { MODULE_CATALOG, registerModule } from './workspace/module-catalog';
+/** 单模块出入参说明：describeModule(id) 给出必需落盘输入 / 派生数据 / 元素 / API / 配置 / 事件 */
+export { MODULE_IO, describeModule } from './workspace/module-io';
+export type { ModuleIoSpec, ModuleDescription, OptionalInput } from './workspace/module-io';
 export { buildWorkspaceTemplate, registerCssSegment, registerTemplateSlice } from './workspace/template';
 /** 生命周期扩展点：让新模块声明的任意 lifecycle 值都能挂载 hooks */
 export { registerLifecycle } from './elements/stock-workspace';
@@ -61,11 +71,28 @@ const ELEMENTS = {
 
 export const ELEMENT_TAGS = Object.keys(ELEMENTS);
 
-/** @param {CustomElementRegistry} [registry] 可注入自定义 registry 便于测试隔离 */
-export function defineAll(registry?: CustomElementRegistry): string[] {
-  const r = registry || customElements;
-  for (const tag of ELEMENT_TAGS) {
-    if (!r.get(tag)) r.define(tag, (ELEMENTS as Record<string, CustomElementConstructor>)[tag]);
+/**
+ * 按需注册指定标签（未知标签忽略、已注册跳过，可重复调用）。
+ * 服务端（无 customElements）自动 no-op 并返回空数组，SSR 工程可在通用代码里直接调用。
+ * @param tags 需要注册的标签名，如 ['stock-chart', 'price-pane', 'indicator-pane']
+ * @param registry 可注入自定义 registry 便于测试隔离
+ * @returns 本次实际处于已注册状态的标签
+ */
+export function defineElements(tags: readonly string[], registry?: CustomElementRegistry): string[] {
+  const r = registry ?? (typeof customElements === 'undefined' ? undefined : customElements);
+  if (!r) return [];
+  const map = ELEMENTS as Record<string, CustomElementConstructor>;
+  const done: string[] = [];
+  for (const tag of tags) {
+    const ctor = map[tag];
+    if (!ctor) continue;
+    if (!r.get(tag)) r.define(tag, ctor);
+    done.push(tag);
   }
-  return ELEMENT_TAGS.slice();
+  return done;
+}
+
+/** 注册全部内置标签；服务端自动 no-op。@param registry 可注入自定义 registry 便于测试隔离 */
+export function defineAll(registry?: CustomElementRegistry): string[] {
+  return defineElements(ELEMENT_TAGS, registry);
 }

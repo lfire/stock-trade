@@ -5,7 +5,9 @@
  * 额外修复（默认 anchorToIntraday=true）：连续竞价每分钟的逐笔 volume 之和严格等于
  * 该分钟分时 volume，amount 按各笔 volume 占该分钟分时 amount 的比例分配、末笔吸收
  * 金额残差（不取整，保证浮点按分钟聚合严格 === 分时 amount）。
- * 集合竞价首条（09:25:00）与盘后点保持脚本原样（不参与 242 分钟的聚合校验）。
+ * 集合竞价首条（09:25:00）：市面分时口径（腾讯 / 东财）把开盘集合竞价成交并入首个分钟点
+ * （09:30），故该笔量额 = 首个常规分钟点的量额，且该分钟不再另拆连续竞价成交（避免重复计数）；
+ * 盘后固定价段只记真实发生的成交（零成交分钟不造笔）。由此逐笔总量 === 分时总量。
  * 体积按降序排列，使吸收残差的末笔为最小量（acc ≥ A/2），从而 Sterbenz 引理下
  * acc + (A-acc) === A 严格成立，消除 1 ULP 尾差。
  * anchorToIntraday=false 时回退到脚本原始（未修复）口径。
@@ -53,9 +55,16 @@ export function buildTradeSeries(
     prev = price;
   };
 
-  push('09:25:00', intraday[0].price, 15000, 'N', 'N', 'auction', 1);   // 集合竞价无主动方向
   const regular = intraday.filter((p) => p.session !== 'afterHours');
+  const opening = regular[0];
+  if (anchor && opening) {
+    // 开盘集合竞价成交 = 首个分钟点（09:30）的量额；集合竞价无主动方向
+    push('09:25:00', opening.price, opening.volume, 'N', 'N', 'auction', 1, opening.amount);
+  } else {
+    push('09:25:00', intraday[0].price, 15000, 'N', 'N', 'auction', 1);   // 旧脚本口径（未修复）
+  }
   for (const p of regular) {
+    if (anchor && p === opening) continue;            // 已由 09:25 竞价成交完整表示
     const n = 1 + Math.floor(rnd() * 3);              // 每分钟 1–3 条合并分笔
     const V = p.volume, A = p.amount;
     if (anchor) {
@@ -91,7 +100,11 @@ export function buildTradeSeries(
     }
   }
   for (const p of intraday.filter((x) => x.session === 'afterHours')) {
-    push(p.time, p.price, Math.max(100, p.volume), 'N', 'M', 'afterHours', 1);
+    if (anchor) {
+      if (p.volume > 0) push(p.time, p.price, p.volume, 'N', 'M', 'afterHours', 1, p.amount);
+    } else {
+      push(p.time, p.price, Math.max(100, p.volume), 'N', 'M', 'afterHours', 1);   // 旧脚本口径
+    }
   }
   return trades;
 }

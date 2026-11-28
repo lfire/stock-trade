@@ -81,3 +81,33 @@ test('withPalette：帧内切换、帧后还原全局色板', () => {
   assert.throws(() => withPalette({}, () => { throw new Error('boom'); }), /boom/);
   assert.equal(PALETTE.background, before); // 异常路径也必须还原
 });
+
+test('depthSideRatio：按可视档位统计买卖合计与占比（量 / 额口径）', async () => {
+  const { depthSideRatio, ALGORITHMS } = await import('../../dist/pure.js');
+  const lv = (price, volume) => ({ price, volume, orderCount: 1 });
+  const bids = [lv(10, 300), lv(9.99, 100)];
+  const asks = [lv(10.01, 200), lv(10.02, 400)];
+  const v = depthSideRatio(bids, asks);
+  assert.equal(v.buy, 400);
+  assert.equal(v.sell, 600);
+  assert.equal(v.buyRatio, 0.4);
+  assert.equal(v.sellRatio, 0.6);
+  // 金额口径 = 委托价 × 挂单量
+  const a = depthSideRatio(bids, asks, 'amount');
+  assert.equal(a.buy, 10 * 300 + 9.99 * 100);
+  assert.ok(Math.abs(a.buyRatio + a.sellRatio - 1) < 1e-12);
+  // 只算调用方给出的可视档：截到 1 档结果随之变化
+  assert.equal(depthSideRatio(bids.slice(0, 1), asks.slice(0, 1)).buyRatio, 0.6);
+  // 不修改入参
+  assert.deepEqual(bids, [lv(10, 300), lv(9.99, 100)]);
+  assert.ok(ALGORITHMS['depth-ratio']?.pure, 'depth-ratio 须登记到 ALGORITHMS');
+});
+
+test('depthSideRatio：涨停无卖盘 100%、双方无挂单为 null、非法量按 0 计', async () => {
+  const { depthSideRatio } = await import('../../dist/pure.js');
+  const lv = (price, volume) => ({ price, volume, orderCount: 1 });
+  assert.deepEqual(depthSideRatio([lv(11, 1000)], []), { buy: 1000, sell: 0, buyRatio: 1, sellRatio: 0 });
+  assert.deepEqual(depthSideRatio([], [lv(9, 500)]), { buy: 0, sell: 500, buyRatio: 0, sellRatio: 1 });
+  assert.deepEqual(depthSideRatio([], []), { buy: 0, sell: 0, buyRatio: null, sellRatio: null });
+  assert.equal(depthSideRatio([lv(10, NaN), lv(10, -5), lv(10, 100)], [lv(10, 100)]).buyRatio, 0.5);
+});

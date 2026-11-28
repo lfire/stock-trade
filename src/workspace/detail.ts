@@ -41,6 +41,7 @@ import { trim } from '../algorithms/format';
 import { CHART_EVENTS } from '../events';
 import { deriveHistoricalDayView } from '../algorithms/historical-intraday';
 import { withTradeTrend } from '../algorithms/trade-series';
+import { assignTradeOrderNos, buildOrderRuns } from '../algorithms/trade-order-runs';
 
 /** 一条连续时间线的数据行：逐笔行带 trend 派生字段 */
 type TradeRow = TradeTick & { trend: number };
@@ -106,6 +107,8 @@ interface IntradayMini extends HTMLElement {
     manifest: Record<string, unknown>;
     bars: Bar[];
     intraday: IntradayPoint[];
+    /** 前一交易日分时点：供「成交对比」副图在历史分时视图中使用 */
+    prevIntraday?: IntradayPoint[];
     auction?: AuctionPoint[];
     trades?: TradeTick[];
     depth?: unknown[];
@@ -142,6 +145,9 @@ interface State {
   allTrades: TradeRow[];
   allOrders: OrderRecord[];
   orderMix: string;
+  renderedTradeView: string | null;   // 当日多栏已应用的逐笔展示模式
+  histViewKey: string | null;         // 历史多栏已应用的逐笔展示模式
+  histBase: number;                   // 历史日昨收（买卖单视图着色基准）
 }
 
 const states = new WeakMap<HTMLElement, State>();
@@ -198,6 +204,9 @@ function createState(): State {
     histGroups: [],
     histRows: [],
     histFrom: 0,
+    renderedTradeView: null,
+    histViewKey: null,
+    histBase: 0,
     histL: 20,
     noDataDate: null,
     noDataHint: null,
@@ -311,6 +320,45 @@ function disposeIntradayMini(ctx: WorkspaceContext): void {
   mini?.remove();
 }
 
+/** 逐笔行补齐买卖委托号并合并连续成交（买单 / 卖单视图数据；列表视图忽略这些字段） */
+function withOrderRuns(rows: TradeRow[]): TradeRow[] {
+  return buildOrderRuns(assignTradeOrderNos(rows));
+}
+
+/** 逐笔表格列配置：list 普通明细；match 买单 / 卖单（basePrice 为涨跌着色基准） */
+function tradeViewConfig(ctx: WorkspaceContext, basePrice: number): TradeTapeViewConfig {
+  const cfg = ctx.config();
+  return cfg.tradeView === 'match'
+    ? {
+        mode: 'match',
+        heads: ['时间', '成交价', '成交', '买单', '卖单'],
+        labelKey: 'side',
+        cols: '52px 1fr 0.8fr 1.1fr 1.1fr',
+        colCls: ['', 'side', 'side', 'side', 'side'],
+        extraKey: null,
+        basePrice,
+        bigAmount: cfg.bigOrderAmount,
+      }
+    : {
+        heads: ['时间', '价格', '成交量', '方向'],
+        labelKey: 'side',
+        cols: '62px 1fr 1fr 30px',
+        colCls: ['', 'num', 'num', 'side'],
+        extraKey: null,
+      };
+}
+
+/** 展示模式切换只在「逐笔明细」tab 与历史分时展开态出现（其余视图无逐笔表） */
+function syncTradeViewToggle(ctx: WorkspaceContext): void {
+  const s = getState(ctx);
+  const box = coverRegion(ctx, 'cover-view');
+  if (!box) return;
+  const cfg = ctx.config();
+  box.hidden = !(s.detailSet === 'trades' || (s.detailSet === 'intraday' && cfg.historicalTapeExpanded));
+  box.querySelectorAll<HTMLButtonElement>('button')
+    .forEach((b) => b.classList.toggle('on', b.dataset.view === cfg.tradeView));
+}
+
 /** index.html:1411 — 分组/时间线取当前数据集；全景 / 历史分时不参与虚拟滚动 */
 function detailRows(ctx: WorkspaceContext): DetailRow[] {
   const s = getState(ctx);
@@ -411,18 +459,13 @@ function buildDetailGroups(ctx: WorkspaceContext): void {
             colCls: ['', 'num', 'num', 'num', 'side'],
             extraKey: 'remainVolume',
           }
-        : {
-            heads: ['时间', '价格', '成交量', '方向'],
-            labelKey: 'side',
-            cols: '62px 1fr 1fr 30px',
-            colCls: ['', 'num', 'num', 'side'],
-            extraKey: null,
-          },
+        : tradeViewConfig(ctx, ctx.data()?.manifest.preClose ?? 0),
     );
     t.setWindow([]);
     s.coverTapes.push({ head, tape: t });
   }
   s.detailCover.dataset.groups = String(n);
+  s.renderedTradeView = ctx.config().tradeView;
   s.detailL = Math.max(1, s.coverTapes[0].tape.visibleRows() || 20);
   updateDetailSpacer(ctx);
   renderDetailWindow(ctx);
@@ -846,9 +889,16 @@ function renderHistoricalIntraday(ctx: WorkspaceContext): void {
   const dayView = deriveHistoricalDayView(
     series, base?.bars ?? [], base?.manifest ?? ({} as Manifest),
   );
-  const trades: TradeRow[] = withTradeTrend(dayView.trades, series.preClose);
+  const trades: TradeRow[] = withOrderRuns(withTradeTrend(dayView.trades, series.preClose));
+  s.histBase = series.preClose;
+  // 成交对比副图：同一索引里取前一个交易日的分时点注入 mini；
+  // 最早一天没有前一日时注入空数组，算法层按 0 补齐而不报错。
+  const dates = histDateList(ctx);
+  const di = dates.indexOf(date ?? '');
+  const prevSeries = di > 0 ? historicalMap(ctx)?.[dates[di - 1]] : undefined;
   mini.setDataset({
     manifest: dayView.manifest, bars: dayView.dayBars, intraday: series.points,
+    prevIntraday: prevSeries?.points ?? [],
     auction: dayView.auction, trades, depth: [], orders: [],
   });
   tape.setData(trades);
@@ -882,7 +932,9 @@ function buildHistoricalTapeGroups(ctx: WorkspaceContext): void {
   const grid = host?.querySelector('.hist-tape-grid') as HTMLElement | null;
   if (!grid) return;
   const n = detailGroupCount(grid.clientWidth || ctx.root.clientWidth || 900);
-  if (s.histGroups.length !== n) {
+  const viewKey = ctx.config().tradeView;
+  if (s.histGroups.length !== n || s.histViewKey !== viewKey) {
+    s.histViewKey = viewKey;
     grid.replaceChildren();
     s.histGroups = [];
     grid.style.gridTemplateColumns = `repeat(${n}, minmax(0, 1fr))`;
@@ -895,13 +947,7 @@ function buildHistoricalTapeGroups(ctx: WorkspaceContext): void {
       const t = doc.createElement('trade-tape') as unknown as TapeApi;
       col.append(head, t);
       grid.appendChild(col);
-      t.setViewConfig({
-        heads: ['时间', '价格', '成交量', '方向'],
-        labelKey: 'side',
-        cols: '62px 1fr 1fr 30px',
-        colCls: ['', 'num', 'num', 'side'],
-        extraKey: null,
-      });
+      t.setViewConfig(tradeViewConfig(ctx, s.histBase));
       t.setWindow([]);
       s.histGroups.push({ head, tape: t });
     }
@@ -1021,6 +1067,7 @@ function applyDetailMode(ctx: WorkspaceContext): void {
   coverRegion(ctx, 'cover-tabs')
     ?.querySelectorAll<HTMLButtonElement>('button')
     .forEach((b) => b.classList.toggle('on', b.dataset.set === set));
+  syncTradeViewToggle(ctx);
   if (set === 'intraday') renderHistoricalIntraday(ctx);
   else {
     // 切离历史分时：清空 cover-intraday 内残留 DOM（hist-tape-panel 的 scroll 监听已绑
@@ -1086,7 +1133,7 @@ function bindDataset(ctx: WorkspaceContext): void {
   // 逐笔涨跌口径：以上一笔成交价为基准，首行对昨收；涨 1 / 跌 -1 / 平 0
   const preClose = ds?.manifest.preClose ?? 0;
   const trades = (ds?.trades || []) as TradeTick[];
-  s.allTrades = withTradeTrend(trades, preClose);
+  s.allTrades = withOrderRuns(withTradeTrend(trades, preClose));
   s.allOrders = (ds?.orders || []) as unknown as OrderRecord[];
   const cnt = (a: string): number => s.allOrders.filter((o) => o.action === a).length;
   s.orderMix = ` · NEW ${cnt('NEW')} / FILL ${cnt('FILL')} / CANCEL ${cnt('CANCEL')}`;
@@ -1154,6 +1201,12 @@ export function openDetail(ctx: WorkspaceContext): void {
         ctx.patchConfig({ tapeSet: set }); // 输出配置变更（不直接改全局）
       }, { signal });
     });
+  coverRegion(ctx, 'cover-view')
+    ?.querySelectorAll<HTMLButtonElement>('button')
+    .forEach((b) => b.addEventListener('click', () => {
+      const view = b.dataset.view === 'match' ? 'match' : 'list';
+      if (view !== ctx.config().tradeView) ctx.patchConfig({ tradeView: view });
+    }, { signal }));
   coverRegion(ctx, 'cover-back')?.addEventListener('click', () => {
     closeDetail(ctx);
     // 返回图表即取消选中的历史交易日，避免 histActive 守卫重新打开覆盖视图
@@ -1243,6 +1296,12 @@ export function syncDetail(ctx: WorkspaceContext): void {
       s.detailSet = effectiveSet;
     }
   }
+
+  // 逐笔展示模式切换：当日多栏按新列配置重建（历史多栏在 buildHistoricalTapeGroups 内按 histViewKey 重建）
+  if (s.detailCover && s.detailSet === 'trades' && s.renderedTradeView !== config.tradeView) {
+    buildDetailGroups(ctx);
+  }
+  syncTradeViewToggle(ctx);
 
   // 覆盖视图刚创建、数据已就绪时立即应用 tape-scroll（对应原 1884-1889）
   applyPendingScroll(ctx);

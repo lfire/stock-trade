@@ -1,5 +1,6 @@
 // 根容器：唯一 WebGL2 context / viewport / priceScale / crosshair 的持有者。
 // 画布由单 canvas + scissor 分区绘制；pane 元素只作为配置节点，不产生可见 DOM。
+import { BaseElement } from './ssr-base';
 import { ChartContext, SUBPLOT_INDICATORS } from '../core/chart-context';
 export { SUBPLOT_INDICATORS };
 import { loadDataset } from '../core/data-store';
@@ -10,6 +11,7 @@ import type {
   SideRect, NumericInput, DetailData, Palette, PaletteKey, PaneElementLike, DepthBookSnapshot,
   SubplotLayout, SubplotConfig, ChartContextFacade, StockChartEventMap,
 } from '../types';
+import { getSubplotIndicator, subplotAvailableIn, subplotIndicatorIds, subplotIndicatorLabel } from '../core/subplot-indicators';
 import { chipSnapshotAt } from './chip-pane';
 import { adaptiveMAPeriods, parseMACDParams, resolveMACDParams, maParamsText, macdParamsText } from '../core/indicator-params';
 import { emitEvent, CHART_EVENTS } from '../events';
@@ -31,7 +33,6 @@ interface IndicatorResult { values: IndicatorPoint[]; }
 const PANE_SELECTOR = 'price-pane, indicator-pane, chip-pane, auction-pane';
 /** 声明式 <ma-line> 未给 color 时依次取色板中的这三项，换主题时按同一组键刷新 */
 const MA_DEFAULT_KEYS = ['avg', 'chipLoss', 'limitDownBroken'];
-const IND_LABEL: Record<string, string> = { VOL: '成交量', AMOUNT: '成交额', MACD: 'MACD', KDJ: 'KDJ', VOL_RATIO: '量比' };
 // shortNum 收口到 algorithms/format（与算法单元单一实现一致，签名/口径完全相同，直接替换）。
 // 副图信息栏样式随组件自带，脱离示例页也能正确渲染（选择器限定在 #pane-bars 内）
 const PANE_BARS_CSS = `
@@ -58,7 +59,7 @@ export interface StockChart {
   ): void;
 }
 
-export class StockChart extends HTMLElement {
+export class StockChart extends BaseElement {
   declare ctx: ChartContext | null;
   declare canvas: HTMLCanvasElement | null;
   declare overlay: HTMLDivElement | null;
@@ -598,6 +599,12 @@ export class StockChart extends HTMLElement {
     const i = idx != null ? idx : (intraday ? ctx.getSeries().length - 1 : ctx.viewport.end - 1);
     const b = (v: unknown) => `<b>${v}</b>`;
     const num = (v: unknown) => Number(v ?? 0);
+    const ext = getSubplotIndicator(name);
+    if (ext) {
+      // 扩展副图：文案由描述符提供；当前模式不适用时给出提示而不是报错
+      if (!subplotAvailableIn(ext, ctx.mode)) return ext.unavailableText ?? `${ext.label}（当前模式不可用）`;
+      return ext.valueText(ctx, i, { b, shortNum });
+    }
     if (name === 'VOL' || name === 'AMOUNT') {
       const field = name === 'VOL' ? 'volume' : 'amount';
       const cur = intraday ? ctx.getSeries()[i]?.[field] : (ctx.compute.indicator(name, bars, {}) as IndicatorResult).values[i]?.value;
@@ -639,7 +646,7 @@ export class StockChart extends HTMLElement {
       const locked = i === 0;   // 第一个副图恒为成交量，不提供修改
       return `<div class="pane-bar" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px">
         <select data-pane="${b.index}"${locked ? ' disabled title="第一个副图固定为成交量，不可修改"' : ''}>
-          ${SUBPLOT_INDICATORS.map((n) => `<option value="${n}"${n === b.indicator ? ' selected' : ''}>${IND_LABEL[n] || n}</option>`).join('')}
+          ${subplotIndicatorIds().map((n) => `<option value="${n}"${n === b.indicator ? ' selected' : ''}>${subplotIndicatorLabel(n)}</option>`).join('')}
         </select>
         <span class="vals" data-vals="${b.index}"></span>
       </div>`;

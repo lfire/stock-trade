@@ -583,11 +583,13 @@ const CSS_SOURCE: string = `
       }
       .detail-cover .cover-back {
         justify-self: end;
+        box-sizing: border-box;
+        height: 26px;
         border: 1px solid var(--sw-line, #ECEEF1);
         border-radius: 6px;
         background: var(--sw-bg, #FFFFFF);
-        padding: 3px 12px;
-        font: 12px system-ui;
+        padding: 0 12px;
+        font: 12px/1 system-ui;
         cursor: pointer;
         color: var(--sw-text, #1F2329);
       }
@@ -606,6 +608,57 @@ const CSS_SOURCE: string = `
       .detail-cover .cover-tabs {
         display: inline-flex;
         gap: 4px;
+      }
+      /* 右侧：逐笔展示模式切换（列表 / 买卖单）+ 返回按钮 */
+      .detail-cover .cover-right {
+        justify-self: end;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+      /* 逐笔展示模式：分段控件（凹槽底 + 选中项浮起），高度与「返回图表」一致 */
+      .detail-cover .cover-view {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        box-sizing: border-box;
+        height: 26px;
+        padding: 2px;
+        border-radius: 7px;
+        background: color-mix(in srgb, var(--sw-muted, #6B7280) 12%, var(--sw-panel, #F7F8FA));
+      }
+      .detail-cover .cover-view[hidden] { display: none; }
+      .detail-cover .cover-view button {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        box-sizing: border-box;
+        height: 22px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--sw-muted, #6B7280);
+        font: 12px/1 system-ui, -apple-system, "PingFang SC", sans-serif;
+        cursor: pointer;
+        transition: background-color .15s, color .15s, box-shadow .15s;
+      }
+      .detail-cover .cover-view button svg {
+        display: block;
+        width: 12px;
+        height: 12px;
+        flex: 0 0 12px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.4;
+        stroke-linecap: round;
+      }
+      .detail-cover .cover-view button:not(.on):hover { color: var(--sw-text, #1F2329); }
+      .detail-cover .cover-view button.on {
+        background: var(--sw-bg, #FFFFFF);
+        color: var(--sw-link, #1b5fbf);
+        font-weight: 500;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, .12), 0 0 0 .5px rgba(15, 23, 42, .06);
       }
       .detail-cover .cover-tabs button {
         border: 1px solid var(--sw-line, #ECEEF1);

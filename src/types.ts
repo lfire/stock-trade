@@ -90,6 +90,10 @@ export interface TradeTick {
   phase: 'auction' | 'continuous' | 'afterHours';
   tradeCount: number;
   ordIds?: string[];
+  /** 买方委托号（L2 逐笔明细 BuyNo / BidApplSeqNum；缺省由 assignTradeOrderNos 生成示意号） */
+  buyOrdId?: string;
+  /** 卖方委托号（L2 逐笔明细 SellNo / OfferApplSeqNum） */
+  sellOrdId?: string;
 }
 
 /** 筹码峰单日 9 项统计。 */
@@ -164,6 +168,8 @@ export interface ChartDataset {
   intraday: IntradayPoint[];
   /** 以下均为运行时派生字段；按 modules/preset 按需装载时允许缺省 */
   intradayMulti?: IntradayPoint[];
+  /** 分时成交对比：前一交易日分时点（历史分时 mini 由 workspace 注入；主图从 intradayMulti 派生） */
+  prevIntraday?: IntradayPoint[];
   /** 历史分时索引（按 tradeDate）；消费者可选注入通道，注入时 deriveDataset 原样保留 */
   historicalIntraday?: HistoricalIntradayMap;
   chips?: ChipDataset | ChipDataset[];
@@ -234,6 +240,12 @@ export interface TradeTapeViewConfig {
   cols?: string;
   colCls?: string[];
   extraKey?: string | null;
+  /** 'list' 普通明细（默认）；'match' 买单 / 卖单视图（行需带 buyRun / sellRun，见 buildOrderRuns） */
+  mode?: 'list' | 'match';
+  /** match 视图的涨跌基准价（通常为昨收），缺省按逐笔 trend 着色 */
+  basePrice?: number;
+  /** match 视图的大单金额阈值（元），缺省 BIG_ORDER_AMOUNT = 20 万 */
+  bigAmount?: number;
 }
 export interface TradeTapeMetrics { headH: number; viewH: number; }
 

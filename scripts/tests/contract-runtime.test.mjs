@@ -124,7 +124,7 @@ test('数据体来源标注：竞价示意点、多日拟真点、派生逐笔�
   assert.ok(multi.filter((p) => p.tradeDate === manifest.tradeDate).every((p) => p.source === 'real-intraday'));
 
   // 逐笔 / 盘口 / 委托由 deriveDataset() 在运行时补齐，落盘不再有这些字段
-  assert.equal(derived.trades.length, 495);
+  assert.equal(derived.trades.length, 476);
   assert.ok(derived.trades.every((t) => t.license === 'public-demo' && t.requiresAuthorization === true
     && t.granularity && t.sideSource && t.rawSide !== undefined));
   assert.equal(derived.depth.source, 'mock');
